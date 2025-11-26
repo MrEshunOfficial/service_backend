@@ -1,0 +1,56 @@
+// backend/utils/sendEmail.ts
+import { MailtrapClient } from "mailtrap";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+// Validate environment variables
+if (!process.env.MAILTRAP_TOKEN) {
+  throw new Error("MAILTRAP_TOKEN is not set");
+}
+
+if (!process.env.MAILTRAP_ENDPOINT) {
+  throw new Error("MAILTRAP_ENDPOINT is not set");
+}
+
+const client = new MailtrapClient({
+  token: process.env.MAILTRAP_TOKEN,
+});
+
+const sender = {
+  email: "hello@demomailtrap.com",
+  name: "Mailtrap",
+};
+
+interface SendEmailOptions {
+  to: string;
+  subject: string;
+  html?: string;
+  text?: string;
+  category?: string;
+}
+
+export async function sendEmail(options: SendEmailOptions): Promise<void> {
+  try {
+    const recipients = [
+      {
+        email: "mrkwesieshun@gmail.com",
+      },
+    ];
+    await client.send({
+      from: sender,
+      to: recipients,
+      subject: options.subject,
+      html: options.html,
+      text: options.text,
+      category: options.category || "Application Email",
+    });
+  } catch (error) {
+    // More specific error handling
+    if (error instanceof Error) {
+      throw new Error(`Email sending failed: ${error.message}`);
+    }
+
+    throw new Error("Email sending failed with unknown error");
+  }
+}
