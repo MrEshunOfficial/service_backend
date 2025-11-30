@@ -167,7 +167,7 @@ serviceSchema.pre("save", function (next) {
     this.servicePricing.providerEarnings =
       this.servicePricing.serviceBasePrice - commissionAmount;
   }
-  next();
+  // next();
 });
 
 // Instance methods

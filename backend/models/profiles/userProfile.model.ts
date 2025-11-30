@@ -116,13 +116,13 @@ userProfileSchema.pre("save", function (next) {
   if (this.isModified() && !this.isNew) {
     this.lastModified = new Date();
   }
-  next();
+  // next();
 });
 
 // Pre-update middleware to update lastModified
 userProfileSchema.pre("findOneAndUpdate", function (next) {
   this.set({ lastModified: new Date() });
-  next();
+  // next();
 });
 
 // Instance method to soft delete profile

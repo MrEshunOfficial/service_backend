@@ -133,8 +133,6 @@ categorySchema.pre("validate", async function (next) {
 
     this.slug = slug;
   }
-
-  next();
 });
 
 // Instance methods

@@ -1,5 +1,6 @@
 // services/service.service.ts
-import { FilterQuery, Types, UpdateQuery, PopulateOptions } from "mongoose";
+import { Types, UpdateQuery, PopulateOptions, Query } from "mongoose";
+
 import { Service } from "../types/service.types";
 import { ServiceModel } from "../models/service.model";
 import slugify from "slugify";
@@ -106,17 +107,17 @@ class ServiceService {
       case PopulationLevel.MINIMAL:
         return [
           { path: "categoryId", select: "catName slug" },
-          { path: "providerId", select: "businessName slug" },
+          { path: "coverImage", select: "url thumbnailUrl fileName" },
         ];
 
       case PopulationLevel.STANDARD:
         return [
-          { path: "categoryId", select: "catName slug isActive" },
+          { path: "categoryId", select: "catName slug" },
           {
             path: "providerId",
             select: "businessName slug business_logo location",
           },
-          { path: "coverImage", select: "url fileName" },
+          { path: "coverImage", select: "url thumbnailUrl fileName" },
         ];
 
       case PopulationLevel.DETAILED:
@@ -126,7 +127,7 @@ class ServiceService {
             path: "providerId",
             select: "businessName slug business_logo location business_contact",
           },
-          { path: "coverImage", select: "url fileName altText label" },
+          { path: "coverImage", select: "url thumbnailUrl fileName label" },
           { path: "submittedBy", select: "name email" },
         ];
 
@@ -143,7 +144,7 @@ class ServiceService {
           },
           {
             path: "coverImage",
-            select: "url fileName altText label uploadedAt fileSize mimeType",
+            select: "url thumbnailUrl fileName label uploadedAt fileSize mimeType",
           },
           { path: "submittedBy", select: "name email role" },
           { path: "approvedBy", select: "name email" },
@@ -233,7 +234,7 @@ class ServiceService {
     categoryId: string,
     providerId?: string
   ): Promise<Service | null> {
-    const query: FilterQuery<Service> = {
+    const query: Record<string, any> = {
       title: { $regex: new RegExp(`^${title.trim()}$`, "i") }, // Case-insensitive exact match
       categoryId: new Types.ObjectId(categoryId),
       deletedAt: null,
@@ -266,7 +267,7 @@ class ServiceService {
       populationLevel = PopulationLevel.STANDARD,
     } = options;
 
-    const query: FilterQuery<Service> = { _id: serviceId };
+    const query: Record<string, any> = { _id: serviceId };
 
     if (!includeDeleted) {
       query.deletedAt = null;
@@ -299,7 +300,7 @@ class ServiceService {
       populationLevel = PopulationLevel.STANDARD,
     } = options;
 
-    const query: FilterQuery<Service> = { slug };
+    const query: Record<string, any> = { slug };
 
     if (!includeDeleted) {
       query.deletedAt = null;
@@ -323,9 +324,9 @@ class ServiceService {
   async getPublicServices(
     filters?: Omit<ServiceSearchFilters, "isPrivate">,
     pagination?: PaginationOptions,
-    populationLevel: PopulationLevel = PopulationLevel.MINIMAL
+    populationLevel: PopulationLevel = PopulationLevel.STANDARD
   ): Promise<ServiceQueryResult> {
-    const query: FilterQuery<Service> = {
+    const query: Record<string, any> = {
       isActive: true,
       deletedAt: null,
       isPrivate: false, // Only public services
@@ -343,7 +344,7 @@ class ServiceService {
     pagination?: PaginationOptions,
     populationLevel: PopulationLevel = PopulationLevel.MINIMAL
   ): Promise<ServiceQueryResult> {
-    const query: FilterQuery<Service> = {
+    const query: Record<string, any> = {
       isActive: true,
       deletedAt: null,
     };
@@ -367,7 +368,7 @@ class ServiceService {
     pagination?: PaginationOptions,
     populationLevel: PopulationLevel = PopulationLevel.MINIMAL
   ): Promise<ServiceQueryResult> {
-    const query: FilterQuery<Service> = {
+    const query: Record<string, any> = {
       categoryId: new Types.ObjectId(categoryId),
       isActive: true,
       deletedAt: null,
@@ -398,7 +399,7 @@ class ServiceService {
       populationLevel = PopulationLevel.MINIMAL,
     } = options;
 
-    const query: FilterQuery<Service> = {
+    const query: Record<string, any> = {
       providerId: new Types.ObjectId(providerId),
       deletedAt: null,
     };
@@ -420,7 +421,7 @@ class ServiceService {
     pagination?: PaginationOptions,
     populationLevel: PopulationLevel = PopulationLevel.STANDARD
   ): Promise<ServiceQueryResult> {
-    const query: FilterQuery<Service> = {
+    const query: Record<string, any> = {
       $text: { $search: searchTerm },
       isActive: true,
       deletedAt: null,
@@ -680,7 +681,7 @@ class ServiceService {
     pagination?: PaginationOptions,
     populationLevel: PopulationLevel = PopulationLevel.STANDARD
   ): Promise<ServiceQueryResult> {
-    const query: FilterQuery<Service> = {
+    const query: Record<string, any> = {
       deletedAt: null,
       approvedAt: { $exists: false },
       rejectedAt: { $exists: false },
@@ -697,7 +698,7 @@ class ServiceService {
     pagination?: PaginationOptions,
     populationLevel: PopulationLevel = PopulationLevel.MINIMAL
   ): Promise<ServiceQueryResult> {
-    const query: FilterQuery<Service> = {
+    const query: Record<string, any> = {
       deletedAt: null,
     };
 
@@ -915,7 +916,7 @@ class ServiceService {
     let counter = 1;
 
     while (true) {
-      const query: FilterQuery<Service> = { slug };
+      const query: Record<string, any> = { slug };
       if (excludeId) {
         query._id = { $ne: excludeId };
       }
@@ -934,7 +935,7 @@ class ServiceService {
    * Helper: Common query method with pagination, filtering, and dynamic population
    */
   private async queryServices(
-    baseQuery: FilterQuery<Service>,
+    baseQuery: Record<string, any>,
     filters?: ServiceSearchFilters,
     pagination?: PaginationOptions,
     populationLevel: PopulationLevel = PopulationLevel.MINIMAL

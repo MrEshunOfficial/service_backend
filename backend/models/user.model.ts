@@ -180,7 +180,7 @@ userSchema.pre("save", function (next) {
     this.deletedAt = new Date();
   }
 
-  next();
+  // next();
 });
 
 // Query middleware to exclude soft-deleted documents by default
@@ -190,7 +190,7 @@ userSchema.pre(/^find/, function (this: mongoose.Query<any, any>, next) {
   if (!options.includeSoftDeleted) {
     this.find({ isDeleted: { $ne: true } });
   }
-  next();
+  // next();
 });
 
 // Instance methods

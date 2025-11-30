@@ -1044,36 +1044,47 @@ export class CategoryService {
   /**
    * Get all categories (admin function)
    */
-  async getAllCategories(
-    limit: number = 50,
-    skip: number = 0,
-    includeDeleted: boolean = false
-  ): Promise<{ categories: Category[]; total: number; hasMore: boolean }> {
-    try {
-      const query: any = includeDeleted ? {} : { isDeleted: false };
+async getAllCategories(
+  limit: number = 50,
+  skip: number = 0,
+  includeDeleted: boolean = false
+): Promise<{ categories: Category[]; total: number; hasMore: boolean }> {
+  try {
+    const query: any = includeDeleted ? {} : { isDeleted: false };
 
-      const [categories, total] = await Promise.all([
-        CategoryModel.find(query)
-          .limit(limit)
-          .skip(skip)
-          .populate("catCoverId", "url thumbnailUrl")
-          .populate("parentCategoryId", "catName slug")
-          .populate("createdBy", "email firstName lastName")
-          .populate("lastModifiedBy", "email firstName lastName")
-          .sort({ createdAt: -1 })
-          .lean(),
-        CategoryModel.countDocuments(query),
-      ]);
+    // Step 1: Check raw data
+    const testCategory = await CategoryModel.findOne(query).lean();
+    console.log('Test category catCoverId:', testCategory?.catCoverId);
 
-      return {
-        categories: categories as Category[],
-        total,
-        hasMore: skip + categories.length < total,
-      };
-    } catch (error) {
-      throw error;
+    // Step 2: Check if File exists
+    if (testCategory?.catCoverId) {
+      const file = await this.fileService.getFileById(testCategory.catCoverId.toString());
+      console.log('File exists:', !!file, 'File data:', file);
     }
+
+    const [categories, total] = await Promise.all([
+      CategoryModel.find(query)
+        .limit(limit)
+        .skip(skip)
+        .populate("catCoverId", "url thumbnailUrl uploadedAt")  // Simplified
+        .populate("parentCategoryId", "catName slug")
+        .populate("createdBy", "email firstName lastName")
+        .populate("lastModifiedBy", "email firstName lastName")
+        .sort({ createdAt: -1 })
+        .lean(),
+      CategoryModel.countDocuments(query),
+    ]);
+
+    return {
+      categories: categories as Category[],
+      total,
+      hasMore: skip + categories.length < total,
+    };
+  } catch (error) {
+    console.error('getAllCategories error:', error);
+    throw error;
   }
+}
 
   /**
    * Get image status for a category

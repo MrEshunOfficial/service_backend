@@ -484,7 +484,7 @@ fileSchema.pre("save", function (next) {
     }
   }
 
-  next();
+  // next();
 });
 
 /**
@@ -503,7 +503,7 @@ fileSchema.pre(/^find/, function (next) {
   if (!("deletedAt" in filter)) {
     (this as any).where({ deletedAt: { $exists: false } });
   }
-  next();
+  // next();
 });
 
 // Export the model

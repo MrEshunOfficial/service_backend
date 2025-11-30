@@ -55,7 +55,7 @@ router.get(
 router.post(
   "/",
   authenticateToken,
-  // requireAdmin,
+  requireAdmin,
   categoryController.createCategory
 );
 

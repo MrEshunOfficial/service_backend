@@ -154,7 +154,7 @@ export class ServiceRetrievalHandler extends BaseServiceHandler {
       const result = await serviceService.getPublicServices(
         filters,
         pagination,
-        PopulationLevel.MINIMAL
+        PopulationLevel.STANDARD
       );
 
       res.status(200).json({
