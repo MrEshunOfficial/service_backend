@@ -14,3 +14,4 @@ router.post("/apple", appleAuth);
 router.post("/link-provider", authenticateToken, linkProvider);
 
 export default router;
+

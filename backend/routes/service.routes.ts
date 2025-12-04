@@ -129,7 +129,7 @@ router.get(
  * Get all services (admin view)
  * Query params: categoryId, providerId, isActive, isPrivate, page, limit, sortBy, sortOrder
  */
-router.get("/admin/all", authenticateToken, requireAdmin, getAllServices);
+router.get("/admin/all", authenticateToken, requireAdmin,  getAllServices);
 
 /**
  * Get service statistics

@@ -228,6 +228,8 @@ export class AuthService {
     user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000);
     await user.save();
 
+    console.log(resetToken)
+
     // Send email
     try {
       await sendEmail({

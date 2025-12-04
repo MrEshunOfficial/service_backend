@@ -12,26 +12,33 @@ import {
 
 export class BaseServiceHandler {
   /**
-   * Get user access level from role
+   * Get user access level based on user properties
    */
-  protected getUserAccessLevel(role?: string): ProviderAccessLevel {
-    switch (role) {
-      case "admin":
-        return ProviderAccessLevel.ADMIN;
-      case "company_trained":
-        return ProviderAccessLevel.COMPANY_TRAINED;
-      case "verified":
-        return ProviderAccessLevel.VERIFIED;
-      default:
-        return ProviderAccessLevel.STANDARD;
+  protected getUserAccessLevel(user?: any): ProviderAccessLevel {
+    if (!user) return ProviderAccessLevel.STANDARD;
+    
+    // Admin and Super Admin get full access
+    if (user.isAdmin || user.isSuperAdmin) {
+      return ProviderAccessLevel.ADMIN;
     }
+    
+    // Add other access levels based on your user model properties
+    // Uncomment and modify these based on your actual user schema:
+    // if (user.isCompanyTrained) {
+    //   return ProviderAccessLevel.COMPANY_TRAINED;
+    // }
+    // if (user.isVerified || user.isEmailVerified) {
+    //   return ProviderAccessLevel.VERIFIED;
+    // }
+    
+    return ProviderAccessLevel.STANDARD;
   }
 
   /**
-   * Check if user is admin
+   * Check if user is admin or super admin
    */
   protected isAdmin(req: AuthenticatedRequest, res: Response): boolean {
-    if (req.user?.role !== "admin") {
+    if (!req.user?.isAdmin && !req.user?.isSuperAdmin) {
       res.status(403).json({
         success: false,
         message: "Only admins can perform this action",
@@ -73,8 +80,10 @@ export class BaseServiceHandler {
       return false;
     }
 
+    // Admins can modify any service, otherwise check ownership
     if (
-      req.user?.role !== "admin" &&
+      !req.user?.isAdmin &&
+      !req.user?.isSuperAdmin &&
       service.submittedBy?.toString() !== req.user?.id
     ) {
       res.status(403).json({
@@ -96,7 +105,7 @@ export class BaseServiceHandler {
     res: Response
   ): boolean {
     if (service.isPrivate) {
-      const userAccessLevel = this.getUserAccessLevel(req.user?.role);
+      const userAccessLevel = this.getUserAccessLevel(req.user);
       if (userAccessLevel === ProviderAccessLevel.STANDARD) {
         res.status(403).json({
           success: false,

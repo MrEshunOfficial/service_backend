@@ -1,28 +1,32 @@
 // services/image-linking.service.ts
-import { Types, Model } from "mongoose";
+import { Types, Model, Document } from "mongoose";
 import { CategoryModel } from "../../models/category.model";
 import ProfileModel from "../../models/profiles/userProfile.model";
 import { ServiceModel } from "../../models/service.model";
 import { MongoDBFileService } from "../../services/files/mongodb.files.service";
+import { ProviderModel } from "../../models/profiles/provider.model";
 
 /**
  * Generic Image Linking Service
  *
- * Handles automatic linking of images to entities (profiles, categories, etc.)
+ * Handles automatic linking of images to entities (profiles, categories, services, providers)
  * Supports flexible workflow where images can be uploaded before or after entity creation
  *
  * Supported entities:
  * - user: Profile pictures
  * - category: Category cover images
- * - service: Service images (can be extended)
+ * - service: Service images
+ * - provider: Provider business gallery images
  * - product: Product images (can be extended)
  */
 
-type EntityType = "user" | "category" | "service" | "product";
+type EntityType = "user" | "category" | "service" | "provider" | "product";
 type Label =
   | "profile_picture"
   | "category_cover"
   | "service_cover"
+  | "provider_gallery"
+  | "provider_id_image"
   | "product_image";
 
 interface LinkImageConfig {
@@ -50,18 +54,20 @@ export class ImageLinkingService {
 
   /**
    * Get the appropriate model based on entity type
+   * Returns Model<any> to avoid complex type compatibility issues
    */
   private getEntityModel(entityType: EntityType): Model<any> {
     switch (entityType) {
       case "user":
-        return ProfileModel;
+        return ProfileModel as Model<any>;
       case "category":
-        return CategoryModel;
-      // Add more entity types as needed
+        return CategoryModel as Model<any>;
       case "service":
-        return ServiceModel;
+        return ServiceModel as Model<any>;
+      case "provider":
+        return ProviderModel as Model<any>;
       // case "product":
-      //   return ProductModel;
+      //   return ProductModel as Model<any>;
       default:
         throw new Error(`Unsupported entity type: ${entityType}`);
     }
@@ -78,7 +84,8 @@ export class ImageLinkingService {
         return "_id";
       case "service":
         return "_id";
-      // Add more entity types as needed
+      case "provider":
+        return "_id";
       default:
         return "_id";
     }
@@ -101,7 +108,7 @@ export class ImageLinkingService {
       const entityIdField = this.getEntityIdField(entityType);
 
       // Find the entity
-      const query: any = {
+      const query: Record<string, any> = {
         [entityIdField]: new Types.ObjectId(entityId),
         isDeleted: false,
       };
@@ -114,7 +121,7 @@ export class ImageLinkingService {
       }
 
       // Update entity with image ID
-      const updateData: any = {
+      const updateData: Record<string, any> = {
         [imageFieldName]: fileId,
       };
 
@@ -170,7 +177,7 @@ export class ImageLinkingService {
       // Link image to entity
       const Model = this.getEntityModel(entityType);
 
-      const updateData: any = {
+      const updateData: Record<string, any> = {
         [imageFieldName]: orphanedImage._id,
       };
 
@@ -202,6 +209,52 @@ export class ImageLinkingService {
   }
 
   /**
+   * Link multiple images to provider (for gallery or ID images)
+   * Special handling for providers with array fields
+   */
+  async linkMultipleImagesToProvider(
+    providerId: string,
+    fileIds: Types.ObjectId[],
+    fieldName: "BusinessGalleryImages" | "IdDetails.fileImage",
+    lastModifiedBy?: string
+  ): Promise<ImageLinkResult> {
+    try {
+      const entity = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!entity) {
+        return { linked: false, error: "Provider not found" };
+      }
+
+      const updateData: Record<string, any> = {
+        lastModifiedBy: lastModifiedBy
+          ? new Types.ObjectId(lastModifiedBy)
+          : undefined,
+      };
+
+      if (fieldName === "BusinessGalleryImages") {
+        updateData.BusinessGalleryImages = fileIds;
+      } else if (fieldName === "IdDetails.fileImage") {
+        updateData["IdDetails.fileImage"] = fileIds;
+      }
+
+      await ProviderModel.findByIdAndUpdate(entity._id, updateData, {
+        new: true,
+      });
+
+      return { linked: true, entityId: entity._id };
+    } catch (error) {
+      console.error(`Error linking images to provider:`, error);
+      return {
+        linked: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+
+  /**
    * Unlink image from entity
    * Called when image is deleted
    */
@@ -216,13 +269,13 @@ export class ImageLinkingService {
       const Model = this.getEntityModel(entityType);
       const entityIdField = this.getEntityIdField(entityType);
 
-      const query: any = {
+      const query: Record<string, any> = {
         [entityIdField]: new Types.ObjectId(entityId),
         [imageFieldName]: fileId,
         isDeleted: false,
       };
 
-      const updateData: any = {
+      const updateData: Record<string, any> = {
         $unset: { [imageFieldName]: 1 },
       };
 
@@ -272,7 +325,7 @@ export class ImageLinkingService {
       const entityIdField = this.getEntityIdField(entityType);
 
       // Check entity
-      const query: any = {
+      const query: Record<string, any> = {
         [entityIdField]: new Types.ObjectId(entityId),
         isDeleted: false,
       };
@@ -340,7 +393,7 @@ export class ImageLinkingService {
       const entityIdField = this.getEntityIdField(entityType);
 
       // Build query
-      const query: any = { isDeleted: false };
+      const query: Record<string, any> = { isDeleted: false };
       if (specificEntityId) {
         query[entityIdField] = new Types.ObjectId(specificEntityId);
       }
@@ -373,7 +426,7 @@ export class ImageLinkingService {
               image._id.toString() !== entity[imageFieldName].toString()
             ) {
               // Remove invalid reference
-              const updateData: any = {
+              const updateData: Record<string, any> = {
                 $unset: { [imageFieldName]: 1 },
               };
 
@@ -388,7 +441,7 @@ export class ImageLinkingService {
 
           // Case 2: Entity exists, image exists, but not linked
           if (!entity[imageFieldName] && image) {
-            const updateData: any = {
+            const updateData: Record<string, any> = {
               [imageFieldName]: image._id,
             };
 
@@ -501,14 +554,8 @@ export class ImageLinkingService {
     count: number;
   }> {
     try {
-      const Model = this.getEntityModel(entityType);
-      const entityIdField = this.getEntityIdField(entityType);
-
-      // Get all active images with the specified label
-      // Note: This would need to be implemented in your file service
+      // This would need to be implemented in your file service
       // For now, we'll return an empty result
-      // You might want to add a method to get all files by label
-
       return {
         orphanedImages: [],
         count: 0,

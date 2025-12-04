@@ -113,10 +113,6 @@ class ServiceService {
       case PopulationLevel.STANDARD:
         return [
           { path: "categoryId", select: "catName slug" },
-          {
-            path: "providerId",
-            select: "businessName slug business_logo location",
-          },
           { path: "coverImage", select: "url thumbnailUrl fileName" },
         ];
 
@@ -125,7 +121,7 @@ class ServiceService {
           { path: "categoryId", select: "catName catDesc slug isActive tags" },
           {
             path: "providerId",
-            select: "businessName slug business_logo location business_contact",
+            select: "businessName slug business_logo location",
           },
           { path: "coverImage", select: "url thumbnailUrl fileName label" },
           { path: "submittedBy", select: "name email" },
@@ -148,8 +144,8 @@ class ServiceService {
           },
           { path: "submittedBy", select: "name email role" },
           { path: "approvedBy", select: "name email" },
-          { path: "rejectedBy", select: "name email" },
         ];
+        
 
       default:
         return [];
@@ -264,7 +260,7 @@ class ServiceService {
   ): Promise<Service | null> {
     const {
       includeDeleted = false,
-      populationLevel = PopulationLevel.STANDARD,
+      populationLevel = PopulationLevel.DETAILED,
     } = options;
 
     const query: Record<string, any> = { _id: serviceId };
@@ -297,7 +293,7 @@ class ServiceService {
   ): Promise<Service | null> {
     const {
       includeDeleted = false,
-      populationLevel = PopulationLevel.STANDARD,
+      populationLevel = PopulationLevel.DETAILED,
     } = options;
 
     const query: Record<string, any> = { slug };
@@ -875,7 +871,7 @@ class ServiceService {
 
       // Use COMPLETE population level for this method
       const service = await this.getServiceById(serviceId, {
-        populationLevel: PopulationLevel.COMPLETE,
+        populationLevel: PopulationLevel.DETAILED,
       });
 
       if (!service) {

@@ -23,7 +23,7 @@ export interface UserLocation {
   ghanaPostGPS: string; // e.g. "GA-123-4567"
   nearbyLandmark?: string; // e.g. "Opposite Accra Mall"
 
-  // Auto-filled / Verified (from OpenStreetMap or GhanaPost)
+  // Auto-filled / Verified (from OpenStreetMap or googleMap)
   region?: string; // e.g. "Greater Accra"
   city?: string; // e.g. "Accra"
   district?: string; // e.g. "Ayawaso West"
@@ -69,7 +69,7 @@ export enum idType {
 export interface IdDetails {
   idType: idType;
   idNumber: string;
-  fileImageId: Types.ObjectId[];
+  fileImage: Types.ObjectId[];
 }
 
 // Enums
@@ -96,3 +96,5 @@ export enum ServiceStatus {
   REJECTED = "rejected",
   SUSPENDED = "suspended",
 }
+
+

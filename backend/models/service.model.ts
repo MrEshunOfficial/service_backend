@@ -1,5 +1,5 @@
 // models/service.model.ts
-import { Schema, model, Model, HydratedDocument } from "mongoose";
+import { Schema, model, HydratedDocument } from "mongoose";
 import {
   Service,
   ServiceMethods,
@@ -88,18 +88,16 @@ const serviceSchema = new Schema<Service, IServiceModel, ServiceMethods>(
     },
 
     // Provider-specific fields
-    providerId: {
+    providerId: [{
       type: Schema.Types.ObjectId,
-      ref: "Provider",
-      index: true,
-    },
+      ref: "ProviderProfile",
+      index: true
+    }],
 
     // Pricing and availability
     servicePricing: {
       type: servicePricingSchema,
-      required: function (this: Service) {
-        return !!this.providerId;
-      },
+      required: false,
     },
     isPrivate: {
       type: Boolean,
@@ -159,7 +157,7 @@ serviceSchema.index({ providerId: 1, isActive: 1, deletedAt: 1 });
 serviceSchema.index({ slug: 1, deletedAt: 1 });
 
 // Pre-save middleware to calculate provider earnings
-serviceSchema.pre("save", function (next) {
+serviceSchema.pre("save", async function () {
   if (this.servicePricing && this.servicePricing.serviceBasePrice) {
     const commissionAmount =
       this.servicePricing.serviceBasePrice *
@@ -167,7 +165,6 @@ serviceSchema.pre("save", function (next) {
     this.servicePricing.providerEarnings =
       this.servicePricing.serviceBasePrice - commissionAmount;
   }
-  // next();
 });
 
 // Instance methods

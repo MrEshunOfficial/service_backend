@@ -359,12 +359,18 @@ export const getAllUsers = handleAsync(
   }
 );
 
+// controllers/auth.controller.ts
+// Replace your updateUserRole function with this:
+
 export const updateUserRole = handleAsync(
   async (req: AuthenticatedRequest, res: Response) => {
-    if (!requireSuperAdmin(req, res)) return;
-
     const { userId } = req.params;
     const { systemRole } = req.body;
+
+    // Validate userId
+    if (!userId || userId === 'undefined') {
+      return sendErrorResponse(res, 400, 'Valid user ID is required');
+    }
 
     if (!validateRequired({ systemRole }, res)) return;
 
