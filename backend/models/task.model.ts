@@ -1,37 +1,34 @@
 // models/task.model.ts
 import { Schema, model, HydratedDocument } from "mongoose";
-import { UserLocation } from "../types/base.types";
-import { TaskPriority, BudgetType, Task, TaskMethods, TaskStatus, ITaskModel } from "../types/tasks.types";
+import {
+  TaskPriority,
+  Task,
+  TaskMethods,
+  TaskStatus,
+  ITaskModel,
+} from "../types/tasks.types";
 
 /**
- * Coordinates Sub-Schema
+ * Task Location Sub-Schema
  */
-const coordinatesSchema = new Schema(
+const taskLocationSchema = new Schema(
   {
-    latitude: { type: Number, required: true },
-    longitude: { type: Number, required: true },
-  },
-  { _id: false }
-);
-
-/**
- * User Location Sub-Schema
- */
-const userLocationSchema = new Schema(
-  {
-    ghanaPostGPS: { type: String, required: true, trim: true },
-    nearbyLandmark: { type: String, trim: true },
-    region: { type: String, trim: true },
-    city: { type: String, trim: true },
-    district: { type: String, trim: true },
-    locality: { type: String, trim: true },
-    streetName: { type: String, trim: true },
-    houseNumber: { type: String, trim: true },
-    gpsCoordinates: { type: coordinatesSchema },
-    isAddressVerified: { type: Boolean, default: false },
-    sourceProvider: {
+    clientLocality: {
       type: String,
-      enum: ["openstreetmap", "google", "ghanapost"],
+      required: true,
+      trim: true,
+      index: true,
+    },
+    clientGPSAddress: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    providerLocality: {
+      type: String,
+      required: true,
+      trim: true,
+      index: true,
     },
   },
   { _id: false }
@@ -42,97 +39,17 @@ const userLocationSchema = new Schema(
  */
 const taskScheduleSchema = new Schema(
   {
-    preferredStartDate: { type: Date },
-    preferredEndDate: { type: Date },
-    isFlexible: { type: Boolean, default: true },
     urgency: {
       type: String,
       enum: Object.values(TaskPriority),
+      required: true,
       default: TaskPriority.MEDIUM,
     },
-    estimatedDuration: { type: Number, min: 0 },
-    specificTimeSlots: [
-      {
-        date: { type: Date, required: true },
-        startTime: { type: String, required: true },
-        endTime: { type: String, required: true },
-      },
-    ],
-  },
-  { _id: false }
-);
-
-/**
- * Task Budget Sub-Schema
- */
-const taskBudgetSchema = new Schema(
-  {
-    type: {
-      type: String,
-      enum: Object.values(BudgetType),
-      required: true,
-      default: BudgetType.FIXED,
+    preferredDate: { type: Date },
+    timeSlot: {
+      startTime: { type: String, trim: true },
+      endTime: { type: String, trim: true },
     },
-    amount: { type: Number, min: 0 },
-    minAmount: { type: Number, min: 0 },
-    maxAmount: { type: Number, min: 0 },
-    hourlyRate: { type: Number, min: 0 },
-    currency: {
-      type: String,
-      required: true,
-      default: "GHS",
-      enum: ["GHS", "USD"],
-    },
-    includesMaterials: { type: Boolean, default: false },
-    additionalCosts: [
-      {
-        description: { type: String, required: true, trim: true },
-        amount: { type: Number, required: true, min: 0 },
-      },
-    ],
-  },
-  { _id: false }
-);
-
-/**
- * Task Requirements Sub-Schema
- */
-const taskRequirementsSchema = new Schema(
-  {
-    skillsNeeded: {
-      type: [String],
-      default: [],
-      validate: {
-        validator: (skills: string[]) => skills.length <= 20,
-        message: "Maximum 20 skills allowed",
-      },
-    },
-    experienceLevel: {
-      type: String,
-      enum: ["beginner", "intermediate", "expert", "any"],
-      default: "any",
-    },
-    certificationRequired: { type: Boolean, default: false },
-    specificTools: { type: [String], default: [] },
-    languagePreference: { type: [String], default: [] },
-    minRating: {
-      type: Number,
-      min: 1,
-      max: 5,
-      default: 1,
-    },
-  },
-  { _id: false }
-);
-
-/**
- * Task Media Sub-Schema
- */
-const taskMediaSchema = new Schema(
-  {
-    images: [{ type: Schema.Types.ObjectId, ref: "File" }],
-    documents: [{ type: Schema.Types.ObjectId, ref: "File" }],
-    videos: [{ type: Schema.Types.ObjectId, ref: "File" }],
   },
   { _id: false }
 );
@@ -150,34 +67,6 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       maxlength: 200,
       index: "text",
     },
-    description: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 5000,
-      index: "text",
-    },
-    categoryId: {
-      type: Schema.Types.ObjectId,
-      ref: "Category",
-      required: true,
-      index: true,
-    },
-    relatedServices: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "Service",
-      },
-    ],
-    tags: {
-      type: [String],
-      default: [],
-      index: "text",
-      validate: {
-        validator: (tags: string[]) => tags.length <= 20,
-        message: "Maximum 20 tags allowed",
-      },
-    },
 
     // Customer Information
     customerId: {
@@ -186,30 +75,10 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       required: true,
       index: true,
     },
-    customerProfileId: {
-      type: Schema.Types.ObjectId,
-      ref: "UserProfile",
-    },
 
     // Location
-    taskLocation: {
-      type: userLocationSchema,
-      required: true,
-    },
-    isRemoteTask: {
-      type: Boolean,
-      default: false,
-      index: true,
-    },
-    maxTravelDistance: {
-      type: Number,
-      min: 0,
-      max: 500, // Max 500km
-    },
-
-    // Budget & Pricing
-    budget: {
-      type: taskBudgetSchema,
+    location: {
+      type: taskLocationSchema,
       required: true,
     },
 
@@ -219,17 +88,6 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       required: true,
     },
 
-    // Requirements
-    requirements: {
-      type: taskRequirementsSchema,
-      required: true,
-    },
-
-    // Media
-    media: {
-      type: taskMediaSchema,
-    },
-
     // Status & Visibility
     status: {
       type: String,
@@ -237,29 +95,41 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       default: TaskStatus.DRAFT,
       index: true,
     },
-    isPublic: {
-      type: Boolean,
-      default: true,
-      index: true,
-    },
     expiresAt: {
       type: Date,
       index: true,
     },
 
-    // Matching & Assignment
+    // Matching Results (Auto-matched on creation)
+    matchedProviders: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "ProviderProfile",
+      },
+    ],
+    hasMatches: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    // Provider Interest (For floating tasks)
     interestedProviders: [
       {
         type: Schema.Types.ObjectId,
         ref: "ProviderProfile",
       },
     ],
-    invitedProviders: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "ProviderProfile",
-      },
-    ],
+
+    // Assignment
+    requestedProviderId: {
+      type: Schema.Types.ObjectId,
+      ref: "ProviderProfile",
+      index: true,
+    },
+    requestedAt: {
+      type: Date,
+    },
     assignedProviderId: {
       type: Schema.Types.ObjectId,
       ref: "ProviderProfile",
@@ -287,11 +157,6 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       type: Number,
       default: 0,
       min: 0,
-    },
-    matchScore: {
-      type: Number,
-      min: 0,
-      max: 100,
     },
 
     // Soft Delete
@@ -326,66 +191,64 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
 /**
  * Indexes for performance
  */
-taskSchema.index({ title: "text", description: "text", tags: "text" });
-taskSchema.index({ categoryId: 1, status: 1, isDeleted: 1 });
+taskSchema.index({ title: "text" });
 taskSchema.index({ customerId: 1, status: 1, isDeleted: 1 });
-taskSchema.index({ status: 1, isPublic: 1, expiresAt: 1, isDeleted: 1 });
-taskSchema.index({ "taskLocation.region": 1, "taskLocation.city": 1 });
-taskSchema.index({ "taskLocation.gpsCoordinates": "2dsphere" }); // Geospatial index
+taskSchema.index({ status: 1, hasMatches: 1, expiresAt: 1, isDeleted: 1 });
+taskSchema.index({
+  "location.clientLocality": 1,
+  "location.providerLocality": 1,
+});
+taskSchema.index({ matchedProviders: 1, status: 1 });
+taskSchema.index({ requestedProviderId: 1, status: 1 });
 taskSchema.index({ assignedProviderId: 1, status: 1 });
 taskSchema.index({ createdAt: -1, status: 1 });
-taskSchema.index({ "budget.minAmount": 1, "budget.maxAmount": 1 });
 
 /**
- * Pre-save middleware for validation
+ * Pre-save middleware
  */
 taskSchema.pre("save", async function () {
-  // Validate budget based on type
-  if (this.budget.type === BudgetType.FIXED && !this.budget.amount) {
-    throw new Error("Fixed budget requires an amount");
-  }
-
-  if (
-    this.budget.type === BudgetType.RANGE &&
-    (!this.budget.minAmount || !this.budget.maxAmount)
-  ) {
-    throw new Error("Range budget requires min and max amounts");
-  }
-
-  if (
-    this.budget.type === BudgetType.RANGE &&
-    this.budget.minAmount! > this.budget.maxAmount!
-  ) {
-    throw new Error("Min amount cannot be greater than max amount");
-  }
-
-  if (this.budget.type === BudgetType.HOURLY && !this.budget.hourlyRate) {
-    throw new Error("Hourly budget requires an hourly rate");
-  }
-
   // Auto-set expiration if not set (default: 30 days)
-  if (!this.expiresAt && this.status === TaskStatus.OPEN) {
+  if (
+    !this.expiresAt &&
+    (this.status === TaskStatus.OPEN || this.status === TaskStatus.FLOATING)
+  ) {
     const expiryDate = new Date();
     expiryDate.setDate(expiryDate.getDate() + 30);
     this.expiresAt = expiryDate;
   }
 
-  // Validate schedule dates
-  if (
-    this.schedule.preferredStartDate &&
-    this.schedule.preferredEndDate &&
-    this.schedule.preferredStartDate > this.schedule.preferredEndDate
-  ) {
-    throw new Error("Start date cannot be after end date");
+  // Validate time slot if provided
+  if (this.schedule.timeSlot) {
+    const { startTime, endTime } = this.schedule.timeSlot;
+    if (startTime && endTime && startTime >= endTime) {
+      throw new Error("Start time must be before end time");
+    }
   }
 
-  // Set status to OPEN if publishing from DRAFT
+  // Auto-match providers when task moves from DRAFT to OPEN/FLOATING
   if (
     this.isModified("status") &&
-    this.status === TaskStatus.OPEN &&
-    !this.isNew
+    this.status !== TaskStatus.DRAFT &&
+    !this.hasMatches
   ) {
-    this.isPublic = true;
+    try {
+      const matches = await this.findMatchingProviders();
+
+      if (matches && matches.length > 0) {
+        this.matchedProviders = matches.map((m) => m.provider as any);
+        this.hasMatches = true;
+        this.status = TaskStatus.OPEN;
+      } else {
+        this.matchedProviders = [];
+        this.hasMatches = false;
+        this.status = TaskStatus.FLOATING;
+      }
+    } catch (error) {
+      console.error("Error auto-matching providers:", error);
+      // Default to floating if matching fails
+      this.status = TaskStatus.FLOATING;
+      this.hasMatches = false;
+    }
   }
 });
 
@@ -411,10 +274,26 @@ taskSchema.methods.restore = function (
   return this.save();
 };
 
-taskSchema.methods.assignToProvider = function (
+taskSchema.methods.requestProvider = function (
   this: HydratedDocument<Task, TaskMethods>,
   providerId: any
 ) {
+  // Client requests a provider (from matched list or interested providers)
+  this.requestedProviderId = providerId;
+  this.requestedAt = new Date();
+  this.status = TaskStatus.REQUESTED;
+  return this.save();
+};
+
+taskSchema.methods.acceptRequest = function (
+  this: HydratedDocument<Task, TaskMethods>,
+  providerId: any
+) {
+  // Provider accepts the client's request
+  if (this.requestedProviderId?.toString() !== providerId.toString()) {
+    throw new Error("Only the requested provider can accept this task");
+  }
+
   this.assignedProviderId = providerId;
   this.assignedAt = new Date();
   this.status = TaskStatus.ASSIGNED;
@@ -443,6 +322,11 @@ taskSchema.methods.addInterestedProvider = function (
   this: HydratedDocument<Task, TaskMethods>,
   providerId: any
 ) {
+  // Only for floating tasks
+  if (this.status !== TaskStatus.FLOATING) {
+    throw new Error("Only floating tasks can receive provider interest");
+  }
+
   if (!this.interestedProviders) {
     this.interestedProviders = [];
   }
@@ -464,73 +348,176 @@ taskSchema.methods.removeInterestedProvider = function (
   return this.save();
 };
 
-taskSchema.methods.inviteProvider = function (
-  this: HydratedDocument<Task, TaskMethods>,
-  providerId: any
+taskSchema.methods.findMatchingProviders = async function (
+  this: HydratedDocument<Task, TaskMethods>
 ) {
-  if (!this.invitedProviders) {
-    this.invitedProviders = [];
+  // Import models dynamically to avoid circular dependencies
+  const { ProviderModel } = await import("./profiles/provider.model");
+  const { ServiceModel } = await import("./service.model");
+
+  // Extract keywords from task title
+  const keywords = this.title
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word.length > 2); // Filter out short words
+
+  if (keywords.length === 0) {
+    return []; // No keywords to match
   }
-  if (!this.invitedProviders.includes(providerId)) {
-    this.invitedProviders.push(providerId);
+
+  // Find services that match the keywords
+  const matchingServices = await ServiceModel.find({
+    $text: { $search: keywords.join(" ") },
+    isActive: true,
+    deletedAt: null,
+  }).populate("providerId");
+
+  // Filter services and get unique provider IDs
+  const providerIdsSet = new Set<string>();
+  const servicesByProvider = new Map<string, any[]>();
+
+  for (const service of matchingServices) {
+    // providerId is an array in Service model
+    if (service.providerId && Array.isArray(service.providerId)) {
+      for (const providerRef of service.providerId) {
+        const provider = providerRef as any;
+        if (provider && provider._id) {
+          const providerId = provider._id.toString();
+          providerIdsSet.add(providerId);
+
+          if (!servicesByProvider.has(providerId)) {
+            servicesByProvider.set(providerId, []);
+          }
+          servicesByProvider.get(providerId)!.push(service);
+        }
+      }
+    }
   }
-  return this.save();
+
+  if (providerIdsSet.size === 0) {
+    return []; // No providers found
+  }
+
+  // Fetch full provider profiles matching the locality
+  const providers = await ProviderModel.find({
+    _id: { $in: Array.from(providerIdsSet) },
+    "locationData.locality": this.location.providerLocality,
+    isDeleted: { $ne: true },
+  }).populate("profile");
+
+  // Calculate match scores
+  const matches = providers.map((provider) => {
+    const relevantServices =
+      servicesByProvider.get(provider._id.toString()) || [];
+
+    return {
+      provider: provider._id,
+      matchScore: this.calculateMatchScore(provider, relevantServices),
+      matchReasons: this.getMatchReasons(provider, relevantServices),
+      availability: provider.isAlwaysAvailable || false,
+      relevantServices,
+      providerRating: (provider as any).averageRating || 0,
+      completedTasksCount: (provider as any).completedTasks || 0,
+      responseTime: (provider as any).averageResponseTime,
+    };
+  });
+
+  // Sort by match score (highest first)
+  return matches.sort((a, b) => b.matchScore - a.matchScore);
 };
 
+// Helper method to calculate match score
 taskSchema.methods.calculateMatchScore = function (
-  this: HydratedDocument<Task, TaskMethods>,
-  provider: any
+  provider: any,
+  relevantServices: any[] = []
 ) {
   let score = 0;
 
-  // Category match (30 points)
-  if (provider.serviceOfferings) {
-    const hasMatchingService = provider.serviceOfferings.some(
-      (service: any) =>
-        service.categoryId?.toString() === this.categoryId.toString()
-    );
-    if (hasMatchingService) score += 30;
+  // Provider locality match (40 points) - CRITICAL
+  // Must match locationData.locality since that's what ProviderProfile uses
+  if (provider.locationData?.locality === this.location.providerLocality) {
+    score += 40;
   }
 
-  // Location proximity (25 points)
-  if (
-    !this.isRemoteTask &&
-    provider.locationData?.region === this.taskLocation.region
-  ) {
-    score += 15;
-    if (provider.locationData?.city === this.taskLocation.city) {
-      score += 10;
-    }
-  } else if (this.isRemoteTask) {
-    score += 25; // Remote tasks don't require location match
+  // Service relevance (30 points)
+  if (relevantServices.length > 0) {
+    score += 30;
   }
 
-  // Skills match (20 points)
-  if (this.requirements.skillsNeeded.length > 0 && provider.serviceOfferings) {
-    const providerSkills = provider.serviceOfferings.flatMap(
-      (service: any) => service.tags || []
-    );
-    const matchingSkills = this.requirements.skillsNeeded.filter((skill) =>
-      providerSkills.includes(skill)
-    );
-    const skillMatchPercentage =
-      matchingSkills.length / this.requirements.skillsNeeded.length;
-    score += Math.round(skillMatchPercentage * 20);
+  // Rating bonus (15 points max)
+  const profile = provider.profile || provider;
+  if (profile.averageRating) {
+    score += (profile.averageRating / 5) * 15;
   }
 
-  // Availability match (15 points)
+  // Experience bonus (10 points max)
+  if (profile.completedTasks) {
+    const experienceScore = Math.min(profile.completedTasks / 10, 1) * 10;
+    score += experienceScore;
+  }
+
+  // Availability match (5 points)
   if (provider.isAlwaysAvailable) {
-    score += 15;
-  } else if (provider.workingHours && this.schedule.specificTimeSlots) {
-    // Basic availability check - can be enhanced
-    score += 10;
+    score += 5;
+  } else if (provider.workingHours && this.schedule.timeSlot) {
+    // Check if provider's working hours overlap with task time slot
+    // Simple check for now - can be enhanced
+    score += 3;
   }
 
-  // Budget compatibility (10 points)
-  // This would require checking provider's typical pricing
-  score += 10;
+  return Math.min(Math.round(score), 100);
+};
 
-  return Math.min(score, 100);
+// Helper method to get match reasons
+taskSchema.methods.getMatchReasons = function (provider: any, services: any[]) {
+  const reasons: string[] = [];
+
+  // Check locality match
+  if (provider.locationData?.locality === this.location.providerLocality) {
+    reasons.push(`Located in ${this.location.providerLocality}`);
+  }
+
+  // Service offerings
+  if (services.length > 0) {
+    reasons.push(`Offers ${services.length} relevant service(s)`);
+  }
+
+  // Rating - check both provider and profile
+  const profile = provider.profile || provider;
+  const rating = profile.averageRating || provider.averageRating;
+
+  if (rating >= 4.5) {
+    reasons.push("Highly rated provider");
+  } else if (rating >= 4.0) {
+    reasons.push("Well-rated provider");
+  }
+
+  // Experience
+  const completedTasks = profile.completedTasks || provider.completedTasks;
+  if (completedTasks >= 50) {
+    reasons.push("Very experienced provider");
+  } else if (completedTasks >= 10) {
+    reasons.push("Experienced provider");
+  }
+
+  // Availability
+  if (provider.isAlwaysAvailable) {
+    reasons.push("Available anytime");
+  } else if (provider.workingHours) {
+    reasons.push("Has set working hours");
+  }
+
+  // Company trained
+  if (provider.isCompanyTrained) {
+    reasons.push("Company trained");
+  }
+
+  // Verified address
+  if (provider.locationData?.isAddressVerified) {
+    reasons.push("Verified address");
+  }
+
+  return reasons.length > 0 ? reasons : ["Available in your area"];
 };
 
 /**
@@ -547,111 +534,40 @@ taskSchema.statics.findByCustomer = function (customerId: string) {
   }).sort({ createdAt: -1 });
 };
 
-taskSchema.statics.findByCategory = function (categoryId: string) {
+taskSchema.statics.findFloatingTasks = function () {
   return this.find({
-    categoryId,
-    status: TaskStatus.OPEN,
-    isPublic: true,
+    status: TaskStatus.FLOATING,
+    hasMatches: false,
     isDeleted: { $ne: true },
     expiresAt: { $gt: new Date() },
   }).sort({ createdAt: -1 });
 };
 
-taskSchema.statics.findByLocation = function (
-  location: UserLocation,
-  maxDistance?: number
-) {
-  const query: any = {
-    status: TaskStatus.OPEN,
-    isPublic: true,
-    isDeleted: { $ne: true },
-    expiresAt: { $gt: new Date() },
-  };
-
-  // Location-based filtering
-  if (location.region) {
-    query["taskLocation.region"] = location.region;
-    if (location.city) {
-      query["taskLocation.city"] = location.city;
-    }
-  }
-
-  return this.find(query).sort({ createdAt: -1 });
-};
-
-taskSchema.statics.findOpenTasks = function () {
+taskSchema.statics.findTasksWithMatches = function () {
   return this.find({
     status: TaskStatus.OPEN,
-    isPublic: true,
+    hasMatches: true,
     isDeleted: { $ne: true },
     expiresAt: { $gt: new Date() },
   }).sort({ createdAt: -1 });
 };
 
-taskSchema.statics.findMatchingTasks = function (providerId: string) {
+taskSchema.statics.findByProviderInMatches = function (providerId: string) {
   return this.find({
-    $or: [
-      { interestedProviders: providerId },
-      { invitedProviders: providerId },
-      { assignedProviderId: providerId },
-    ],
+    matchedProviders: providerId,
+    status: TaskStatus.OPEN,
     isDeleted: { $ne: true },
+    expiresAt: { $gt: new Date() },
   }).sort({ createdAt: -1 });
 };
 
-taskSchema.statics.searchTasks = function (
-  searchTerm: string,
-  filters?: {
-    categoryId?: string;
-    minBudget?: number;
-    maxBudget?: number;
-    location?: UserLocation;
-    status?: TaskStatus;
-  }
-) {
-  const query: any = {
+taskSchema.statics.searchTasks = function (searchTerm: string) {
+  return this.find({
     $text: { $search: searchTerm },
+    $or: [{ status: TaskStatus.OPEN }, { status: TaskStatus.FLOATING }],
     isDeleted: { $ne: true },
-  };
-
-  if (filters?.categoryId) {
-    query.categoryId = filters.categoryId;
-  }
-
-  if (filters?.status) {
-    query.status = filters.status;
-  } else {
-    query.status = TaskStatus.OPEN;
-    query.isPublic = true;
-    query.expiresAt = { $gt: new Date() };
-  }
-
-  if (filters?.minBudget || filters?.maxBudget) {
-    query.$or = [];
-
-    if (filters.minBudget) {
-      query.$or.push({
-        "budget.amount": { $gte: filters.minBudget },
-        "budget.minAmount": { $gte: filters.minBudget },
-      });
-    }
-
-    if (filters.maxBudget) {
-      query.$or.push({
-        "budget.amount": { $lte: filters.maxBudget },
-        "budget.maxAmount": { $lte: filters.maxBudget },
-      });
-    }
-  }
-
-  if (filters?.location?.region) {
-    query["taskLocation.region"] = filters.location.region;
-    if (filters.location.city) {
-      query["taskLocation.city"] = filters.location.city;
-    }
-  }
-
-  return this.find(query).sort({ score: { $meta: "textScore" }, createdAt: -1 });
+    expiresAt: { $gt: new Date() },
+  }).sort({ score: { $meta: "textScore" }, createdAt: -1 });
 };
 
 /**
@@ -663,10 +579,14 @@ taskSchema.virtual("isExpired").get(function () {
 
 taskSchema.virtual("isActive").get(function () {
   return (
-    this.status === TaskStatus.OPEN &&
+    (this.status === TaskStatus.OPEN || this.status === TaskStatus.FLOATING) &&
     !this.isDeleted &&
     (!this.expiresAt || this.expiresAt > new Date())
   );
+});
+
+taskSchema.virtual("isFloating").get(function () {
+  return this.status === TaskStatus.FLOATING && !this.hasMatches;
 });
 
 taskSchema.virtual("hasAssignedProvider").get(function () {
@@ -678,6 +598,10 @@ taskSchema.virtual("daysUntilExpiry").get(function () {
   const now = new Date();
   const diff = this.expiresAt.getTime() - now.getTime();
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
+});
+
+taskSchema.virtual("matchCount").get(function () {
+  return this.matchedProviders?.length || 0;
 });
 
 taskSchema.virtual("interestCount").get(function () {

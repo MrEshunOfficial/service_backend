@@ -1,11 +1,11 @@
 // types/task.types.ts
 import { Types, HydratedDocument, Model } from "mongoose";
-import { BaseEntity, SoftDeletable, UserLocation } from "./base.types";
+import { BaseEntity, SoftDeletable } from "./base.types";
 import { Service } from "./service.types";
 import { ProviderProfile } from "./providerProfile.types";
 
 /**
- * Task Priority Levels
+ * Task Priority Levels (Urgency)
  */
 export enum TaskPriority {
   LOW = "low",
@@ -19,8 +19,10 @@ export enum TaskPriority {
  */
 export enum TaskStatus {
   DRAFT = "draft",
-  OPEN = "open",
-  ASSIGNED = "assigned",
+  OPEN = "open", // Has matches - client selecting provider
+  FLOATING = "floating", // No matches - visible to all providers
+  REQUESTED = "requested", // Client requested a specific provider
+  ASSIGNED = "assigned", // Provider accepted the request
   IN_PROGRESS = "in_progress",
   COMPLETED = "completed",
   CANCELLED = "cancelled",
@@ -28,67 +30,30 @@ export enum TaskStatus {
 }
 
 /**
- * Budget Type
+ * Task Location (Simplified)
+ * - Client's locality (where they are)
+ * - Provider's locality (where they want provider to be from)
+ * - Client's GPS address
  */
-export enum BudgetType {
-  FIXED = "fixed",
-  HOURLY = "hourly",
-  RANGE = "range",
-  NEGOTIABLE = "negotiable",
+export interface TaskLocation {
+  // Client's location
+  clientLocality: string; // e.g., "Dansoman", "Osu"
+  clientGPSAddress: string; // Ghana Post GPS
+
+  // Where provider should be from
+  providerLocality: string; // e.g., "Accra", "Tema"
 }
 
 /**
- * Task Scheduling Preferences
+ * Task Schedule (Simplified)
  */
 export interface TaskSchedule {
-  preferredStartDate?: Date;
-  preferredEndDate?: Date;
-  isFlexible: boolean;
   urgency: TaskPriority;
-  estimatedDuration?: number; // in hours
-  specificTimeSlots?: {
-    date: Date;
+  preferredDate?: Date;
+  timeSlot?: {
     startTime: string; // e.g., "09:00"
     endTime: string; // e.g., "17:00"
-  }[];
-}
-
-/**
- * Budget Details
- */
-export interface TaskBudget {
-  type: BudgetType;
-  amount?: number; // for fixed
-  minAmount?: number; // for range
-  maxAmount?: number; // for range
-  hourlyRate?: number; // for hourly
-  currency: string; // 'GHS' or 'USD'
-  includesMaterials: boolean;
-  additionalCosts?: {
-    description: string;
-    amount: number;
-  }[];
-}
-
-/**
- * Task Requirements
- */
-export interface TaskRequirements {
-  skillsNeeded: string[];
-  experienceLevel?: "beginner" | "intermediate" | "expert" | "any";
-  certificationRequired: boolean;
-  specificTools?: string[];
-  languagePreference?: string[];
-  minRating?: number; // minimum provider rating (1-5)
-}
-
-/**
- * Task Media
- */
-export interface TaskMedia {
-  images?: Types.ObjectId[]; // Reference to File model
-  documents?: Types.ObjectId[]; // Reference to File model
-  videos?: Types.ObjectId[];
+  };
 }
 
 /**
@@ -97,41 +62,31 @@ export interface TaskMedia {
 export interface Task extends BaseEntity, SoftDeletable {
   // Basic Information
   title: string;
-  description: string;
-  categoryId: Types.ObjectId; // Link to Category
-  relatedServices?: Types.ObjectId[]; // Optional: suggested services
-  tags: string[];
 
   // Customer Information
-  customerId: Types.ObjectId; // User who posted the task
-  customerProfileId?: Types.ObjectId; // Optional: customer profile reference
+  customerId: Types.ObjectId;
 
   // Location
-  taskLocation: UserLocation;
-  isRemoteTask: boolean; // Can be done remotely
-  maxTravelDistance?: number; // in kilometers
-
-  // Budget & Pricing
-  budget: TaskBudget;
+  location: TaskLocation;
 
   // Scheduling
   schedule: TaskSchedule;
 
-  // Requirements
-  requirements: TaskRequirements;
-
-  // Media
-  media?: TaskMedia;
-
   // Status & Visibility
   status: TaskStatus;
-  isPublic: boolean; // Public tasks visible to all, private only to invited
-  expiresAt?: Date; // When task auto-expires if not assigned
+  expiresAt?: Date;
 
-  // Matching & Assignment
-  interestedProviders?: Types.ObjectId[]; // Providers who expressed interest
-  invitedProviders?: Types.ObjectId[]; // Providers invited by customer
-  assignedProviderId?: Types.ObjectId; // Final assigned provider
+  // Matching Results
+  matchedProviders?: Types.ObjectId[]; // Auto-matched providers on creation
+  hasMatches: boolean; // True if system found matching services
+
+  // Provider Interest (for floating tasks with no matches)
+  interestedProviders?: Types.ObjectId[]; // Providers who contacted client for floating tasks
+
+  // Assignment
+  requestedProviderId?: Types.ObjectId; // Provider client requested
+  requestedAt?: Date;
+  assignedProviderId?: Types.ObjectId; // Final assigned provider (after provider accepts)
   assignedAt?: Date;
 
   // Task Completion
@@ -141,7 +96,6 @@ export interface Task extends BaseEntity, SoftDeletable {
 
   // Metadata
   viewCount: number;
-  matchScore?: number; // Internal matching algorithm score
 }
 
 /**
@@ -150,14 +104,13 @@ export interface Task extends BaseEntity, SoftDeletable {
 export interface ProviderMatch {
   provider: ProviderProfile | Types.ObjectId;
   matchScore: number; // 0-100
-  matchReasons: string[]; // Why this provider matches
+  matchReasons: string[];
   distance?: number; // Distance from task location in km
-  estimatedCost?: number; // Provider's estimated cost
   availability: boolean;
-  relevantServices: Service[]; // Services that match the task
+  relevantServices: Service[];
   providerRating?: number;
   completedTasksCount?: number;
-  responseTime?: number; // Average response time in hours
+  responseTime?: number;
 }
 
 /**
@@ -165,13 +118,9 @@ export interface ProviderMatch {
  */
 export interface TaskMatchingCriteria {
   taskId: Types.ObjectId;
-  categoryId: Types.ObjectId;
-  location: UserLocation;
-  maxDistance?: number;
-  budget: TaskBudget;
-  requirements: TaskRequirements;
+  location: TaskLocation;
   schedule: TaskSchedule;
-  preferredProviderIds?: Types.ObjectId[]; // Providers customer has worked with before
+  preferredProviderIds?: Types.ObjectId[];
 }
 
 /**
@@ -181,7 +130,6 @@ export interface TaskMatchingResult {
   task: Task;
   matches: ProviderMatch[];
   totalMatches: number;
-  searchRadius: number; // in km
   executedAt: Date;
 }
 
@@ -191,25 +139,9 @@ export interface TaskMatchingResult {
 export interface TaskInterest extends BaseEntity {
   taskId: Types.ObjectId;
   providerId: Types.ObjectId;
-  message?: string; // Provider's pitch/message to customer
-  proposedBudget?: number;
-  proposedSchedule?: {
-    startDate: Date;
-    endDate: Date;
-  };
+  message?: string;
   status: "pending" | "accepted" | "rejected" | "withdrawn";
   respondedAt?: Date;
-}
-
-/**
- * Task Notification Preferences
- */
-export interface TaskNotificationPreferences {
-  notifyOnNewMatch: boolean;
-  notifyOnProviderInterest: boolean;
-  notifyOnStatusChange: boolean;
-  emailNotifications: boolean;
-  pushNotifications: boolean;
 }
 
 /**
@@ -218,13 +150,15 @@ export interface TaskNotificationPreferences {
 export interface TaskMethods {
   softDelete(deletedBy?: Types.ObjectId): Promise<this>;
   restore(): Promise<this>;
-  assignToProvider(providerId: Types.ObjectId): Promise<this>;
+  requestProvider(providerId: Types.ObjectId): Promise<this>; // Client requests a provider
+  acceptRequest(providerId: Types.ObjectId): Promise<this>; // Provider accepts client's request
   markAsCompleted(): Promise<this>;
   cancel(reason?: string): Promise<this>;
-  addInterestedProvider(providerId: Types.ObjectId): Promise<this>;
+  addInterestedProvider(providerId: Types.ObjectId): Promise<this>; // For floating tasks
   removeInterestedProvider(providerId: Types.ObjectId): Promise<this>;
-  inviteProvider(providerId: Types.ObjectId): Promise<this>;
-  calculateMatchScore(provider: ProviderProfile): number;
+  findMatchingProviders(): Promise<ProviderMatch[]>; // Auto-match on creation
+  calculateMatchScore(provider: any, relevantServices?: any[]): number; // Helper for scoring
+  getMatchReasons(provider: any, services: any[]): string[]; // Helper for match reasons
 }
 
 /**
@@ -233,9 +167,11 @@ export interface TaskMethods {
 export interface TaskVirtuals {
   isExpired: boolean;
   isActive: boolean;
+  isFloating: boolean; // Task has no matches
   hasAssignedProvider: boolean;
   daysUntilExpiry: number;
-  interestCount: number;
+  matchCount: number; // Number of matched providers
+  interestCount: number; // Number of providers who contacted for floating tasks
 }
 
 /**
@@ -244,23 +180,10 @@ export interface TaskVirtuals {
 export interface ITaskModel extends Model<Task, {}, TaskMethods, TaskVirtuals> {
   findActive(): Promise<TaskDocument[]>;
   findByCustomer(customerId: string): Promise<TaskDocument[]>;
-  findByCategory(categoryId: string): Promise<TaskDocument[]>;
-  findByLocation(
-    location: UserLocation,
-    maxDistance?: number
-  ): Promise<TaskDocument[]>;
-  findOpenTasks(): Promise<TaskDocument[]>;
-  findMatchingTasks(providerId: string): Promise<TaskDocument[]>;
-  searchTasks(
-    searchTerm: string,
-    filters?: {
-      categoryId?: string;
-      minBudget?: number;
-      maxBudget?: number;
-      location?: UserLocation;
-      status?: TaskStatus;
-    }
-  ): Promise<TaskDocument[]>;
+  findFloatingTasks(): Promise<TaskDocument[]>; // Tasks with no matches, visible to all
+  findTasksWithMatches(): Promise<TaskDocument[]>; // Tasks with matched providers
+  findByProviderInMatches(providerId: string): Promise<TaskDocument[]>; // Tasks where provider was matched
+  searchTasks(searchTerm: string): Promise<TaskDocument[]>;
 }
 
 /**
@@ -273,47 +196,34 @@ export type TaskDocument = HydratedDocument<Task, ITaskModel & TaskVirtuals>;
  */
 export interface CreateTaskRequestBody {
   title: string;
-  description: string;
-  categoryId: string;
-  relatedServices?: string[];
-  tags?: string[];
-  taskLocation: UserLocation;
-  isRemoteTask: boolean;
-  maxTravelDistance?: number;
-  budget: TaskBudget;
+  location: TaskLocation;
   schedule: TaskSchedule;
-  requirements: TaskRequirements;
-  isPublic: boolean;
-  expiresAt?: Date;
 }
 
 /**
  * Request Body: Update Task
  */
-export interface UpdateTaskRequestBody
-  extends Partial<Omit<CreateTaskRequestBody, "categoryId" | "customerId">> {
+export interface UpdateTaskRequestBody {
+  title?: string;
+  location?: TaskLocation;
+  schedule?: TaskSchedule;
   status?: TaskStatus;
 }
 
 /**
- * Request Body: Express Interest in Task
+ * Request Body: Express Interest in Floating Task
  */
 export interface ExpressInterestRequestBody {
   taskId: string;
-  message?: string;
-  proposedBudget?: number;
-  proposedSchedule?: {
-    startDate: Date;
-    endDate: Date;
-  };
+  message?: string; // Provider's message to client
 }
 
 /**
- * Request Body: Invite Provider to Task
+ * Request Body: Client Requests a Provider
  */
-export interface InviteProviderRequestBody {
+export interface RequestProviderRequestBody {
   taskId: string;
-  providerId: string;
+  providerId: string; // From matched list or from interested providers
   message?: string;
 }
 
@@ -324,8 +234,7 @@ export interface TaskMatchingRequestBody {
   taskId: string;
   maxResults?: number;
   minMatchScore?: number;
-  maxDistance?: number;
-  sortBy?: "matchScore" | "distance" | "rating" | "price";
+  sortBy?: "matchScore" | "distance" | "rating";
 }
 
 /**

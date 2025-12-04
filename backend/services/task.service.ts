@@ -1,584 +1,718 @@
-// services/task-matching.service.ts
+// services/task.service.ts
 import { Types } from "mongoose";
 import { TaskModel } from "../models/task.model";
-import { Service } from "../types/service.types";
 import { ProviderModel } from "../models/profiles/provider.model";
-import { ProviderProfile } from "../types/providerProfile.types";
-import { Task, TaskMatchingResult, ProviderMatch } from "../types/tasks.types";
+import {
+  CreateTaskRequestBody,
+  TaskResponse,
+  TaskStatus,
+  TaskWithMatchesResponse,
+  TaskListResponse,
+  ExpressInterestRequestBody,
+  RequestProviderRequestBody,
+  UpdateTaskRequestBody,
+} from "../types/tasks.types";
 
 /**
- * Task Matching Service
- * Handles the core matching algorithm between tasks and providers
+ * Task Service
+ * Handles all business logic for task operations
  */
-export class TaskMatchingService {
+export class TaskService {
   /**
-   * Calculate distance between two coordinates using Haversine formula
+   * Create a new task
+   * Auto-matches providers on creation
    */
-  private static calculateDistance(
-    lat1: number,
-    lon1: number,
-    lat2: number,
-    lon2: number
-  ): number {
-    const R = 6371; // Earth's radius in kilometers
-    const dLat = this.toRadians(lat2 - lat1);
-    const dLon = this.toRadians(lon2 - lon1);
+  async createTask(
+    customerId: string,
+    data: CreateTaskRequestBody
+  ): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.create({
+        ...data,
+        customerId: new Types.ObjectId(customerId),
+        status: TaskStatus.DRAFT,
+      });
 
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.toRadians(lat1)) *
-        Math.cos(this.toRadians(lat2)) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  }
-
-  private static toRadians(degrees: number): number {
-    return degrees * (Math.PI / 180);
-  }
-
-  /**
-   * Calculate category match score
-   */
-  private static calculateCategoryMatch(
-    task: Task,
-    providerServices: Service[]
-  ): { score: number; matchingServices: Service[] } {
-    const matchingServices = providerServices.filter(
-      (service) =>
-        service.categoryId.toString() === task.categoryId.toString() &&
-        service.isActive &&
-        !service.deletedAt
-    );
-
-    const score = matchingServices.length > 0 ? 30 : 0;
-    return { score, matchingServices };
+      return {
+        message: "Task created successfully",
+        task: task.toJSON(),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to create task",
+        error: error.message,
+      };
+    }
   }
 
   /**
-   * Calculate location match score
+   * Publish a task (moves from DRAFT to OPEN/FLOATING)
+   * Triggers auto-matching
    */
-  private static calculateLocationMatch(
-    task: Task,
-    provider: ProviderProfile
-  ): { score: number; distance: number | undefined } {
-    // Remote tasks get full score
-    if (task.isRemoteTask) {
-      return { score: 25, distance: undefined };
-    }
+  async publishTask(
+    taskId: string,
+    customerId: string
+  ): Promise<TaskWithMatchesResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: taskId,
+        customerId,
+        isDeleted: { $ne: true },
+      });
 
-    let score = 0;
-    let distance: number | undefined = undefined;
-
-    // Calculate GPS distance if both have coordinates
-    if (
-      task.taskLocation.gpsCoordinates &&
-      provider.locationData.gpsCoordinates
-    ) {
-      distance = this.calculateDistance(
-        task.taskLocation.gpsCoordinates.latitude,
-        task.taskLocation.gpsCoordinates.longitude,
-        provider.locationData.gpsCoordinates.latitude,
-        provider.locationData.gpsCoordinates.longitude
-      );
-
-      // Score based on distance
-      if (distance <= 5) score = 25; // Within 5km
-      else if (distance <= 10) score = 20; // Within 10km
-      else if (distance <= 20) score = 15; // Within 20km
-      else if (distance <= 50) score = 10; // Within 50km
-      else if (distance <= 100) score = 5; // Within 100km
-
-      // Check if within max travel distance
-      if (task.maxTravelDistance && distance > task.maxTravelDistance) {
-        score = 0;
-      }
-    } else {
-      // Fallback to region/city matching
-      if (provider.locationData.region === task.taskLocation.region) {
-        score += 15;
-        if (provider.locationData.city === task.taskLocation.city) {
-          score += 10;
-        }
-      }
-    }
-
-    return { score, distance };
-  }
-
-  /**
-   * Calculate skills match score
-   */
-  private static calculateSkillsMatch(
-    task: Task,
-    providerServices: Service[]
-  ): { score: number; matchingSkills: string[] } {
-    if (task.requirements.skillsNeeded.length === 0) {
-      return { score: 20, matchingSkills: [] };
-    }
-
-    // Extract all tags from provider's services
-    const providerSkills = new Set(
-      providerServices.flatMap((service) => service.tags)
-    );
-
-    // Find matching skills
-    const matchingSkills = task.requirements.skillsNeeded.filter((skill) =>
-      providerSkills.has(skill.toLowerCase())
-    );
-
-    // Calculate percentage match
-    const matchPercentage =
-      matchingSkills.length / task.requirements.skillsNeeded.length;
-    const score = Math.round(matchPercentage * 20);
-
-    return { score, matchingSkills };
-  }
-
-  /**
-   * Calculate experience level match
-   */
-  private static calculateExperienceMatch(
-    task: Task,
-    provider: ProviderProfile
-  ): number {
-    // If no specific requirement, give full score
-    if (
-      !task.requirements.experienceLevel ||
-      task.requirements.experienceLevel === "any"
-    ) {
-      return 10;
-    }
-
-    // Check if provider is company trained (indicates higher experience)
-    if (task.requirements.experienceLevel === "expert") {
-      return provider.isCompanyTrained ? 10 : 5;
-    }
-
-    // For intermediate and beginner, give full score
-    return 10;
-  }
-
-  /**
-   * Calculate availability match score
-   */
-  private static calculateAvailabilityMatch(
-    task: Task,
-    provider: ProviderProfile
-  ): number {
-    // Always available providers get full score
-    if (provider.isAlwaysAvailable) {
-      return 15;
-    }
-
-    // If task has specific time slots, check working hours
-    if (task.schedule.specificTimeSlots && provider.workingHours) {
-      // Basic check: if provider has working hours set, give partial score
-      // This can be enhanced to check actual time slot overlaps
-      return 10;
-    }
-
-    // Flexible schedule gets partial score
-    if (task.schedule.isFlexible) {
-      return 12;
-    }
-
-    return 8;
-  }
-
-  /**
-   * Calculate budget compatibility score
-   */
-  private static calculateBudgetMatch(
-    task: Task,
-    providerServices: Service[]
-  ): { score: number; estimatedCost: number | undefined } {
-    if (task.budget.type === "negotiable") {
-      return { score: 10, estimatedCost: undefined };
-    }
-
-    // Get average pricing from provider's services in same category
-    const relevantServices = providerServices.filter(
-      (service) =>
-        service.categoryId.toString() === task.categoryId.toString() &&
-        service.servicePricing
-    );
-
-    if (relevantServices.length === 0) {
-      return { score: 5, estimatedCost: undefined };
-    }
-
-    const avgProviderPrice =
-      relevantServices.reduce(
-        (sum, service) =>
-          sum + (service.servicePricing?.serviceBasePrice || 0),
-        0
-      ) / relevantServices.length;
-
-    let taskBudget: number;
-    if (task.budget.type === "fixed") {
-      taskBudget = task.budget.amount || 0;
-    } else if (task.budget.type === "range") {
-      taskBudget = ((task.budget.minAmount || 0) + (task.budget.maxAmount || 0)) / 2;
-    } else {
-      return { score: 8, estimatedCost: avgProviderPrice };
-    }
-
-    // Score based on how well provider's pricing matches task budget
-    const priceDiff = Math.abs(avgProviderPrice - taskBudget);
-    const diffPercentage = priceDiff / taskBudget;
-
-    let score: number;
-    if (diffPercentage <= 0.1) score = 10; // Within 10%
-    else if (diffPercentage <= 0.2) score = 8; // Within 20%
-    else if (diffPercentage <= 0.3) score = 6; // Within 30%
-    else if (diffPercentage <= 0.5) score = 4; // Within 50%
-    else score = 2;
-
-    return { score, estimatedCost: avgProviderPrice };
-  }
-
-  /**
-   * Calculate certification match
-   */
-  private static calculateCertificationMatch(
-    task: Task,
-    provider: ProviderProfile
-  ): number {
-    if (!task.requirements.certificationRequired) {
-      return 5;
-    }
-
-    // Check if provider has ID details (indicates verification)
-    return provider.IdDetails ? 5 : 0;
-  }
-
-  /**
-   * Calculate deposit preference match
-   */
-  private static calculateDepositMatch(task: Task, provider: ProviderProfile): number {
-    // If both agree on deposit requirements, give bonus
-    if (provider.requireInitialDeposit) {
-      return 5;
-    }
-    return 3;
-  }
-
-  /**
-   * Generate match reasons based on scores
-   */
-  private static generateMatchReasons(
-    categoryScore: number,
-    locationScore: number,
-    skillsScore: number,
-    availabilityScore: number,
-    budgetScore: number,
-    matchingSkills: string[],
-    distance?: number
-  ): string[] {
-    const reasons: string[] = [];
-
-    if (categoryScore >= 25) {
-      reasons.push("Offers services in this category");
-    }
-
-    if (locationScore >= 20) {
-      if (distance !== undefined) {
-        reasons.push(`Located ${distance.toFixed(1)}km away`);
-      } else {
-        reasons.push("Available for remote work");
-      }
-    } else if (locationScore >= 15) {
-      reasons.push("Located in same region");
-    }
-
-    if (skillsScore >= 15 && matchingSkills.length > 0) {
-      reasons.push(`Has ${matchingSkills.length} matching skill(s): ${matchingSkills.slice(0, 3).join(", ")}`);
-    }
-
-    if (availabilityScore >= 13) {
-      reasons.push("Always available");
-    }
-
-    if (budgetScore >= 8) {
-      reasons.push("Pricing matches your budget");
-    }
-
-    return reasons;
-  }
-
-  /**
-   * Main matching algorithm - Find providers for a task
-   */
-  static async findMatchingProviders(
-    taskId: string | Types.ObjectId,
-    options: {
-      maxResults?: number;
-      minMatchScore?: number;
-      maxDistance?: number;
-      sortBy?: "matchScore" | "distance" | "rating" | "price";
-    } = {}
-  ): Promise<TaskMatchingResult> {
-    const {
-      maxResults = 20,
-      minMatchScore = 30,
-      maxDistance,
-      sortBy = "matchScore",
-    } = options;
-
-    // Fetch the task
-    const task = await TaskModel.findById(taskId);
-    if (!task) {
-      throw new Error("Task not found");
-    }
-
-    // Build provider query
-    const providerQuery: any = { isDeleted: { $ne: true } };
-
-    // Filter by location if not remote
-    if (!task.isRemoteTask) {
-      providerQuery["locationData.region"] = task.taskLocation.region;
-      
-      // If max distance is specified and task has coordinates
-      if (maxDistance && task.taskLocation.gpsCoordinates) {
-        providerQuery["locationData.gpsCoordinates"] = {
-          $near: {
-            $geometry: {
-              type: "Point",
-              coordinates: [
-                task.taskLocation.gpsCoordinates.longitude,
-                task.taskLocation.gpsCoordinates.latitude,
-              ],
-            },
-            $maxDistance: maxDistance * 1000, // Convert km to meters
-          },
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found or you don't have permission",
         };
       }
+
+      if (task.status !== TaskStatus.DRAFT) {
+        return {
+          message: "Task already published",
+          error: "Task is not in draft status",
+        };
+      }
+
+      // Change status to trigger auto-matching in pre-save hook
+      task.status = TaskStatus.OPEN;
+      await task.save();
+
+      // Get the matches
+      const matches = task.hasMatches ? await task.findMatchingProviders() : [];
+
+      return {
+        message: task.hasMatches
+          ? `Task published with ${matches.length} matching providers`
+          : "Task published as floating (no matches found)",
+        task: task.toJSON(),
+        matches,
+        totalMatches: matches.length,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to publish task",
+        error: error.message,
+      };
     }
+  }
 
-    // Fetch all potential providers
-    const providers = await ProviderModel.find(providerQuery)
-      .populate("serviceOfferings")
-      .lean();
+  /**
+   * Get task by ID with matches
+   */
+  async getTaskById(
+    taskId: string,
+    userId?: string
+  ): Promise<TaskWithMatchesResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: taskId,
+        isDeleted: { $ne: true },
+      })
+        .populate("customerId", "name email")
+        .populate("matchedProviders", "businessName locationData")
+        .populate("interestedProviders", "businessName locationData")
+        .populate("requestedProviderId", "businessName locationData")
+        .populate("assignedProviderId", "businessName locationData");
 
-    // Calculate match scores for each provider
-    const matches: ProviderMatch[] = [];
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found",
+        };
+      }
 
-    for (const provider of providers) {
-      const providerServices = (provider.serviceOfferings as any[] || []).filter(
-        (service: any) => service && !service.deletedAt
+      // Increment view count if not the owner
+      if (userId && task.customerId.toString() !== userId) {
+        task.viewCount += 1;
+        await task.save();
+      }
+
+      // Get matches if task has them
+      const matches = task.hasMatches ? await task.findMatchingProviders() : [];
+
+      return {
+        message: "Task retrieved successfully",
+        task: task.toJSON(),
+        matches: matches.length > 0 ? matches : undefined,
+        totalMatches: matches.length,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve task",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get all tasks by customer
+   */
+  async getCustomerTasks(customerId: string): Promise<TaskListResponse> {
+    try {
+      const tasks = await TaskModel.findByCustomer(customerId);
+
+      return {
+        message: "Tasks retrieved successfully",
+        tasks: tasks.map((t) => t.toJSON()),
+        total: tasks.length,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve tasks",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get floating tasks (no matches, visible to all providers)
+   */
+  async getFloatingTasks(): Promise<TaskListResponse> {
+    try {
+      const tasks = await TaskModel.findFloatingTasks();
+
+      return {
+        message: "Floating tasks retrieved successfully",
+        tasks: tasks.map((t) => t.toJSON()),
+        total: tasks.length,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve floating tasks",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get tasks where provider was matched
+   */
+  async getProviderMatchedTasks(providerId: string): Promise<TaskListResponse> {
+    try {
+      const tasks = await TaskModel.findByProviderInMatches(providerId);
+
+      return {
+        message: "Matched tasks retrieved successfully",
+        tasks: tasks.map((t) => t.toJSON()),
+        total: tasks.length,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve matched tasks",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Provider expresses interest in floating task
+   */
+  async expressInterest(
+    providerId: string,
+    data: ExpressInterestRequestBody
+  ): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: data.taskId,
+        isDeleted: { $ne: true },
+      });
+
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found",
+        };
+      }
+
+      if (task.status !== TaskStatus.FLOATING) {
+        return {
+          message: "Cannot express interest",
+          error: "Only floating tasks accept provider interest",
+        };
+      }
+
+      await task.addInterestedProvider(new Types.ObjectId(providerId));
+
+      // TODO: Send notification to customer with provider's message
+
+      return {
+        message: "Interest expressed successfully",
+        task: task.toJSON(),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to express interest",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Client requests a provider (from matched list or interested providers)
+   */
+  async requestProvider(
+    customerId: string,
+    data: RequestProviderRequestBody
+  ): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: data.taskId,
+        customerId,
+        isDeleted: { $ne: true },
+      });
+
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found or you don't have permission",
+        };
+      }
+
+      if (
+        task.status !== TaskStatus.OPEN &&
+        task.status !== TaskStatus.FLOATING
+      ) {
+        return {
+          message: "Cannot request provider",
+          error: "Task is not in open or floating status",
+        };
+      }
+
+      // Verify provider is either in matched list or interested list
+      const providerIdObj = new Types.ObjectId(data.providerId);
+      const isMatched = task.matchedProviders?.some(
+        (id) => id.toString() === data.providerId
+      );
+      const isInterested = task.interestedProviders?.some(
+        (id) => id.toString() === data.providerId
       );
 
-      // Calculate individual scores
-      const categoryMatch = this.calculateCategoryMatch(task, providerServices);
-      const locationMatch = this.calculateLocationMatch(task, provider as ProviderProfile);
-      const skillsMatch = this.calculateSkillsMatch(task, providerServices);
-      const experienceScore = this.calculateExperienceMatch(task, provider as ProviderProfile);
-      const availabilityScore = this.calculateAvailabilityMatch(task, provider as ProviderProfile);
-      const budgetMatch = this.calculateBudgetMatch(task, providerServices);
-      const certificationScore = this.calculateCertificationMatch(task, provider as ProviderProfile);
-      const depositScore = this.calculateDepositMatch(task, provider as ProviderProfile);
-
-      // Calculate total score
-      const totalScore =
-        categoryMatch.score +
-        locationMatch.score +
-        skillsMatch.score +
-        experienceScore +
-        availabilityScore +
-        budgetMatch.score +
-        certificationScore +
-        depositScore;
-
-      // Only include if meets minimum score
-      if (totalScore >= minMatchScore) {
-        const matchReasons = this.generateMatchReasons(
-          categoryMatch.score,
-          locationMatch.score,
-          skillsMatch.score,
-          availabilityScore,
-          budgetMatch.score,
-          skillsMatch.matchingSkills,
-          locationMatch.distance
-        );
-
-        matches.push({
-          provider: provider._id,
-          matchScore: Math.min(totalScore, 100),
-          matchReasons,
-          distance: locationMatch.distance,
-          estimatedCost: budgetMatch.estimatedCost,
-          availability: availabilityScore >= 13,
-          relevantServices: categoryMatch.matchingServices,
-          providerRating: undefined, // TODO: Implement rating system
-          completedTasksCount: undefined, // TODO: Track completed tasks
-          responseTime: undefined, // TODO: Track response times
-        });
+      if (!isMatched && !isInterested) {
+        return {
+          message: "Invalid provider",
+          error: "Provider is not matched or interested in this task",
+        };
       }
+
+      // Verify provider exists
+      const provider = await ProviderModel.findOne({
+        _id: providerIdObj,
+        isDeleted: { $ne: true },
+      });
+
+      if (!provider) {
+        return {
+          message: "Provider not found",
+          error: "Provider not found",
+        };
+      }
+
+      await task.requestProvider(providerIdObj);
+
+      // TODO: Send notification to provider with customer's message
+
+      return {
+        message: "Provider requested successfully",
+        task: task.toJSON(),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to request provider",
+        error: error.message,
+      };
     }
-
-    // Sort matches
-    matches.sort((a, b) => {
-      switch (sortBy) {
-        case "distance":
-          if (a.distance === undefined) return 1;
-          if (b.distance === undefined) return -1;
-          return a.distance - b.distance;
-        case "price":
-          if (a.estimatedCost === undefined) return 1;
-          if (b.estimatedCost === undefined) return -1;
-          return a.estimatedCost - b.estimatedCost;
-        case "rating":
-          return (b.providerRating || 0) - (a.providerRating || 0);
-        case "matchScore":
-        default:
-          return b.matchScore - a.matchScore;
-      }
-    });
-
-    // Limit results
-    const limitedMatches = matches.slice(0, maxResults);
-
-    return {
-      task,
-      matches: limitedMatches,
-      totalMatches: matches.length,
-      searchRadius: maxDistance || (task.maxTravelDistance || 50),
-      executedAt: new Date(),
-    };
   }
 
   /**
-   * Find matching tasks for a provider
+   * Provider accepts client's request
    */
-  static async findMatchingTasks(
-    providerId: string | Types.ObjectId,
-    options: {
-      maxResults?: number;
-      minMatchScore?: number;
-      categoryId?: string;
-    } = {}
-  ): Promise<Task[]> {
-    const { maxResults = 20, minMatchScore = 30, categoryId } = options;
+  async acceptRequest(
+    providerId: string,
+    taskId: string
+  ): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: taskId,
+        requestedProviderId: providerId,
+        status: TaskStatus.REQUESTED,
+        isDeleted: { $ne: true },
+      });
 
-    // Fetch provider with services
-    const provider = await ProviderModel.findById(providerId)
-      .populate("serviceOfferings")
-      .lean();
-
-    if (!provider) {
-      throw new Error("Provider not found");
-    }
-
-    // Build task query
-    const taskQuery: any = {
-      status: "open",
-      isPublic: true,
-      isDeleted: { $ne: true },
-      expiresAt: { $gt: new Date() },
-    };
-
-    // Filter by category if provider offers specific services
-    if (categoryId) {
-      taskQuery.categoryId = categoryId;
-    } else if (provider.serviceOfferings && provider.serviceOfferings.length > 0) {
-      const categoryIds = [
-        ...new Set(
-          (provider.serviceOfferings as any[])
-            .map((s: any) => s.categoryId?.toString())
-            .filter(Boolean)
-        ),
-      ];
-      if (categoryIds.length > 0) {
-        taskQuery.categoryId = { $in: categoryIds };
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found or you're not the requested provider",
+        };
       }
+
+      await task.acceptRequest(new Types.ObjectId(providerId));
+
+      // TODO: Send notification to customer
+
+      return {
+        message: "Request accepted successfully",
+        task: task.toJSON(),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to accept request",
+        error: error.message,
+      };
     }
-
-    // Location-based filtering
-    if (provider.locationData.region) {
-      taskQuery.$or = [
-        { isRemoteTask: true },
-        { "taskLocation.region": provider.locationData.region },
-      ];
-    }
-
-    // Fetch potential tasks
-    const tasks = await TaskModel.find(taskQuery).lean();
-
-    // Calculate match scores
-    const matchedTasks: Array<Task & { matchScore: number }> = [];
-    const providerServices = (provider.serviceOfferings as any[] || []).filter(
-      (s: any) => s && !s.deletedAt
-    );
-
-    for (const task of tasks) {
-      const categoryMatch = this.calculateCategoryMatch(task as Task, providerServices);
-      const locationMatch = this.calculateLocationMatch(task as Task, provider as ProviderProfile);
-      const skillsMatch = this.calculateSkillsMatch(task as Task, providerServices);
-      const experienceScore = this.calculateExperienceMatch(task as Task, provider as ProviderProfile);
-      const availabilityScore = this.calculateAvailabilityMatch(task as Task, provider as ProviderProfile);
-      const budgetMatch = this.calculateBudgetMatch(task as Task, providerServices);
-      const certificationScore = this.calculateCertificationMatch(task as Task, provider as ProviderProfile);
-
-      const totalScore =
-        categoryMatch.score +
-        locationMatch.score +
-        skillsMatch.score +
-        experienceScore +
-        availabilityScore +
-        budgetMatch.score +
-        certificationScore;
-
-      if (totalScore >= minMatchScore) {
-        matchedTasks.push({
-          ...(task as Task),
-          matchScore: Math.min(totalScore, 100),
-        });
-      }
-    }
-
-    // Sort by match score
-    matchedTasks.sort((a, b) => b.matchScore - a.matchScore);
-
-    return matchedTasks.slice(0, maxResults);
   }
 
   /**
-   * Get recommended providers for a task (quick match)
+   * Provider declines client's request
    */
-  static async getQuickRecommendations(
-    taskId: string | Types.ObjectId,
-    limit: number = 5
-  ): Promise<ProviderMatch[]> {
-    const result = await this.findMatchingProviders(taskId, {
-      maxResults: limit,
-      minMatchScore: 50, // Higher threshold for recommendations
-      sortBy: "matchScore",
-    });
+  async declineRequest(
+    providerId: string,
+    taskId: string,
+    reason?: string
+  ): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: taskId,
+        requestedProviderId: providerId,
+        status: TaskStatus.REQUESTED,
+        isDeleted: { $ne: true },
+      });
 
-    return result.matches;
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found or you're not the requested provider",
+        };
+      }
+
+      // Reset task to previous status
+      task.status = task.hasMatches ? TaskStatus.OPEN : TaskStatus.FLOATING;
+      task.requestedProviderId = undefined;
+      task.requestedAt = undefined;
+      await task.save();
+
+      // TODO: Send notification to customer with reason
+
+      return {
+        message: "Request declined successfully",
+        task: task.toJSON(),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to decline request",
+        error: error.message,
+      };
+    }
   }
 
   /**
-   * Calculate match score between a specific task and provider
+   * Update task status to IN_PROGRESS
    */
-  static async calculateTaskProviderMatch(
-    taskId: string | Types.ObjectId,
-    providerId: string | Types.ObjectId
-  ): Promise<ProviderMatch | null> {
-    const result = await this.findMatchingProviders(taskId, {
-      maxResults: 1000, // Get all matches
-      minMatchScore: 0, // Include all providers
-    });
+  async startTask(providerId: string, taskId: string): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: taskId,
+        assignedProviderId: providerId,
+        status: TaskStatus.ASSIGNED,
+        isDeleted: { $ne: true },
+      });
 
-    const match = result.matches.find(
-      (m) => m.provider.toString() === providerId.toString()
-    );
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found or you're not assigned to it",
+        };
+      }
 
-    return match || null;
+      task.status = TaskStatus.IN_PROGRESS;
+      await task.save();
+
+      return {
+        message: "Task started successfully",
+        task: task.toJSON(),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to start task",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Mark task as completed
+   */
+  async completeTask(
+    providerId: string,
+    taskId: string
+  ): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: taskId,
+        assignedProviderId: providerId,
+        isDeleted: { $ne: true },
+      });
+
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found or you're not assigned to it",
+        };
+      }
+
+      if (
+        task.status !== TaskStatus.IN_PROGRESS &&
+        task.status !== TaskStatus.ASSIGNED
+      ) {
+        return {
+          message: "Cannot complete task",
+          error: "Task must be in progress or assigned status",
+        };
+      }
+
+      await task.markAsCompleted();
+
+      // TODO: Trigger review/rating request to customer
+
+      return {
+        message: "Task completed successfully",
+        task: task.toJSON(),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to complete task",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Cancel task
+   */
+  async cancelTask(
+    userId: string,
+    taskId: string,
+    reason?: string
+  ): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: taskId,
+        isDeleted: { $ne: true },
+      });
+
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found",
+        };
+      }
+
+      // Check if user is customer or assigned provider
+      const isCustomer = task.customerId.toString() === userId;
+      const isProvider = task.assignedProviderId?.toString() === userId;
+
+      if (!isCustomer && !isProvider) {
+        return {
+          message: "Permission denied",
+          error: "You don't have permission to cancel this task",
+        };
+      }
+
+      await task.cancel(reason);
+
+      // TODO: Send notification to other party
+
+      return {
+        message: "Task cancelled successfully",
+        task: task.toJSON(),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to cancel task",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Update task (only in DRAFT status)
+   */
+  async updateTask(
+    customerId: string,
+    taskId: string,
+    data: UpdateTaskRequestBody
+  ): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: taskId,
+        customerId,
+        isDeleted: { $ne: true },
+      });
+
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found or you don't have permission",
+        };
+      }
+
+      if (task.status !== TaskStatus.DRAFT) {
+        return {
+          message: "Cannot update task",
+          error: "Only draft tasks can be updated",
+        };
+      }
+
+      Object.assign(task, data);
+      await task.save();
+
+      return {
+        message: "Task updated successfully",
+        task: task.toJSON(),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to update task",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Delete task (soft delete)
+   */
+  async deleteTask(customerId: string, taskId: string): Promise<TaskResponse> {
+    try {
+      const task = await TaskModel.findOne({
+        _id: taskId,
+        customerId,
+        isDeleted: { $ne: true },
+      });
+
+      if (!task) {
+        return {
+          message: "Task not found",
+          error: "Task not found or you don't have permission",
+        };
+      }
+
+      if (
+        task.status !== TaskStatus.DRAFT &&
+        task.status !== TaskStatus.OPEN &&
+        task.status !== TaskStatus.FLOATING
+      ) {
+        return {
+          message: "Cannot delete task",
+          error: "Task cannot be deleted in current status",
+        };
+      }
+
+      await task.softDelete(new Types.ObjectId(customerId));
+
+      return {
+        message: "Task deleted successfully",
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to delete task",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Search tasks
+   */
+  async searchTasks(searchTerm: string): Promise<TaskListResponse> {
+    try {
+      const tasks = await TaskModel.searchTasks(searchTerm);
+
+      return {
+        message: "Search completed successfully",
+        tasks: tasks.map((t) => t.toJSON()),
+        total: tasks.length,
+      };
+    } catch (error: any) {
+      return {
+        message: "Search failed",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get task statistics for customer
+   */
+  async getCustomerStats(customerId: string) {
+    try {
+      const tasks = await TaskModel.find({
+        customerId,
+        isDeleted: { $ne: true },
+      });
+
+      const stats = {
+        total: tasks.length,
+        draft: tasks.filter((t) => t.status === TaskStatus.DRAFT).length,
+        open: tasks.filter((t) => t.status === TaskStatus.OPEN).length,
+        floating: tasks.filter((t) => t.status === TaskStatus.FLOATING).length,
+        requested: tasks.filter((t) => t.status === TaskStatus.REQUESTED)
+          .length,
+        assigned: tasks.filter((t) => t.status === TaskStatus.ASSIGNED).length,
+        inProgress: tasks.filter((t) => t.status === TaskStatus.IN_PROGRESS)
+          .length,
+        completed: tasks.filter((t) => t.status === TaskStatus.COMPLETED)
+          .length,
+        cancelled: tasks.filter((t) => t.status === TaskStatus.CANCELLED)
+          .length,
+      };
+
+      return {
+        message: "Statistics retrieved successfully",
+        stats,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve statistics",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get task statistics for provider
+   */
+  async getProviderStats(providerId: string) {
+    try {
+      const tasks = await TaskModel.find({
+        assignedProviderId: providerId,
+        isDeleted: { $ne: true },
+      });
+
+      const matchedTasks = await TaskModel.findByProviderInMatches(providerId);
+
+      const stats = {
+        totalAssigned: tasks.length,
+        matched: matchedTasks.length,
+        assigned: tasks.filter((t) => t.status === TaskStatus.ASSIGNED).length,
+        inProgress: tasks.filter((t) => t.status === TaskStatus.IN_PROGRESS)
+          .length,
+        completed: tasks.filter((t) => t.status === TaskStatus.COMPLETED)
+          .length,
+        cancelled: tasks.filter((t) => t.status === TaskStatus.CANCELLED)
+          .length,
+      };
+
+      return {
+        message: "Statistics retrieved successfully",
+        stats,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve statistics",
+        error: error.message,
+      };
+    }
   }
 }
 
-export default TaskMatchingService;
+export default new TaskService();
