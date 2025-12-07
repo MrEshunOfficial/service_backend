@@ -4,7 +4,11 @@ import { ProviderModel } from "../../models/profiles/provider.model";
 import ProfileModel from "../../models/profiles/userProfile.model";
 import { ServiceModel } from "../../models/service.model";
 import { Coordinates, UserLocation } from "../../types/base.types";
-import { ProviderProfile, CreateProviderProfileRequestBody, UpdateProviderProfileRequestBody } from "../../types/providerProfile.types";
+import {
+  ProviderProfile,
+  CreateProviderProfileRequestBody,
+  UpdateProviderProfileRequestBody,
+} from "../../types/providerProfile.types";
 import { ImageLinkingService } from "../../utils/controller-utils/ImageLinkingService";
 import { osmLocationService } from "./openstreetmap.location.service";
 
@@ -47,77 +51,79 @@ export class ProviderProfileService {
 
       case PopulationLevel.MINIMAL:
         return [
-          { 
-            path: "profile", 
+          {
+            path: "profile",
             select: "userId bio mobileNumber profilePictureId",
             populate: {
               path: "userId",
-              select: "name email"
-            }
+              select: "name email",
+            },
           },
-          { 
-            path: "serviceOfferings", 
-            select: "title slug servicePricing.serviceBasePrice servicePricing.currency" 
+          {
+            path: "serviceOfferings",
+            select:
+              "title slug servicePricing.serviceBasePrice servicePricing.currency",
           },
         ];
 
       case PopulationLevel.STANDARD:
         return [
-          { 
-            path: "profile", 
+          {
+            path: "profile",
             select: "userId bio mobileNumber profilePictureId role",
             populate: [
               {
                 path: "userId",
-                select: "name email"
+                select: "name email",
               },
               {
                 path: "profilePictureId",
-                select: "url thumbnailUrl"
-              }
-            ]
+                select: "url thumbnailUrl",
+              },
+            ],
           },
-          { 
-            path: "serviceOfferings", 
-            select: "title description slug servicePricing categoryId" 
+          {
+            path: "serviceOfferings",
+            select: "title description slug servicePricing categoryId",
           },
-          { 
-            path: "BusinessGalleryImages", 
-            select: "url thumbnailUrl fileName" 
+          {
+            path: "BusinessGalleryImages",
+            select: "url thumbnailUrl fileName",
           },
         ];
 
       case PopulationLevel.DETAILED:
         return [
-          { 
-            path: "profile", 
+          {
+            path: "profile",
             select: "userId bio mobileNumber profilePictureId role createdAt",
             populate: [
               {
                 path: "userId",
-                select: "firstName lastName email createdAt"
+                select: "firstName lastName email createdAt",
               },
               {
                 path: "profilePictureId",
-                select: "url thumbnailUrl fileName uploadedAt"
-              }
-            ]
+                select: "url thumbnailUrl fileName uploadedAt",
+              },
+            ],
           },
-          { 
-            path: "serviceOfferings", 
-            select: "title description slug servicePricing categoryId isPrivate isActive",
+          {
+            path: "serviceOfferings",
+            select:
+              "title description slug servicePricing categoryId isPrivate isActive",
             populate: {
               path: "categoryId",
-              select: "catName slug"
-            }
+              select: "catName slug",
+            },
           },
-          { 
-            path: "BusinessGalleryImages", 
-            select: "url thumbnailUrl fileName label uploadedAt" 
+          {
+            path: "BusinessGalleryImages",
+            select: "url thumbnailUrl fileName label uploadedAt",
           },
-          { 
-            path: "IdDetails.fileImage", 
-            select: "url fileName uploadedAt" 
+          {
+            path: "IdDetails.fileImage",
+            select: "url fileName uploadedAt",
           },
         ];
 
@@ -145,10 +151,7 @@ export class ProviderProfileService {
    * Calculate distance between two coordinates using Haversine formula
    * Returns distance in kilometers
    */
-  private calculateDistance(
-    coord1: Coordinates,
-    coord2: Coordinates
-  ): number {
+  private calculateDistance(coord1: Coordinates, coord2: Coordinates): number {
     const R = 6371; // Earth's radius in km
     const dLat = this.toRadians(coord2.latitude - coord1.latitude);
     const dLon = this.toRadians(coord2.longitude - coord1.longitude);
@@ -213,7 +216,8 @@ export class ProviderProfileService {
       console.error("Error enriching location data:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Location enrichment failed",
+        error:
+          error instanceof Error ? error.message : "Location enrichment failed",
       };
     }
   }
@@ -251,7 +255,7 @@ export class ProviderProfileService {
   }> {
     try {
       const result = await osmLocationService.geocode(address, "gh");
-      
+
       return {
         success: result.success,
         coordinates: result.coordinates,
@@ -274,7 +278,7 @@ export class ProviderProfileService {
     try {
       // Check if provider is company trained
       const provider = await ProviderModel.findById(providerId);
-      
+
       if (!provider || !provider.isCompanyTrained) {
         return [];
       }
@@ -421,7 +425,8 @@ export class ProviderProfileService {
       // If updating location data, enrich it
       if (data.locationData) {
         const needsEnrichment =
-          data.locationData.ghanaPostGPS !== provider.locationData.ghanaPostGPS ||
+          data.locationData.ghanaPostGPS !==
+            provider.locationData.ghanaPostGPS ||
           (data.locationData.gpsCoordinates &&
             (data.locationData.gpsCoordinates.latitude !==
               provider.locationData.gpsCoordinates?.latitude ||
@@ -430,8 +435,10 @@ export class ProviderProfileService {
 
         if (needsEnrichment) {
           const locationEnrichment = await this.enrichLocationData(
-            data.locationData.ghanaPostGPS || provider.locationData.ghanaPostGPS,
-            data.locationData.gpsCoordinates || provider.locationData.gpsCoordinates,
+            data.locationData.ghanaPostGPS ||
+              provider.locationData.ghanaPostGPS,
+            data.locationData.gpsCoordinates ||
+              provider.locationData.gpsCoordinates,
             data.locationData.nearbyLandmark
           );
 
@@ -454,7 +461,8 @@ export class ProviderProfileService {
         });
 
         const hasPrivateServices = services.some((s) => s.isPrivate);
-        const isCompanyTrained = data.isCompanyTrained ?? provider.isCompanyTrained;
+        const isCompanyTrained =
+          data.isCompanyTrained ?? provider.isCompanyTrained;
 
         if (hasPrivateServices && !isCompanyTrained) {
           throw new Error(
@@ -538,54 +546,61 @@ export class ProviderProfileService {
    * This resolves userId -> userProfileId -> providerProfile
    */
 
-async getProviderByUserId(
-  userId: string,
-  populationLevel: PopulationLevel = PopulationLevel.DETAILED
-): Promise<ProviderProfile | null> {
-  try {
-    console.log('🔍 Looking for provider with userId:', userId);
-    
-    // First, find the user profile
-    const userProfile = await ProfileModel.findOne({
-      userId: new Types.ObjectId(userId),
-      isDeleted: false,
-    }).select("_id userId");
+  async getProviderByUserId(
+    userId: string,
+    populationLevel: PopulationLevel = PopulationLevel.DETAILED
+  ): Promise<ProviderProfile | null> {
+    try {
+      console.log("🔍 Looking for provider with userId:", userId);
 
-    if (!userProfile) {
-      console.log('❌ No user profile found for userId:', userId);
-      console.log('💡 Tip: Make sure the user has created a basic profile first');
-      return null;
+      // First, find the user profile
+      const userProfile = await ProfileModel.findOne({
+        userId: new Types.ObjectId(userId),
+        isDeleted: false,
+      }).select("_id userId");
+
+      if (!userProfile) {
+        console.log("❌ No user profile found for userId:", userId);
+        console.log(
+          "💡 Tip: Make sure the user has created a basic profile first"
+        );
+        return null;
+      }
+
+      console.log("✅ Found user profile:", userProfile._id);
+
+      // Then find the provider profile using the user profile ID
+      let providerQuery = ProviderModel.findOne({
+        profile: userProfile._id,
+        isDeleted: false,
+      });
+
+      providerQuery = this.applyPopulation(providerQuery, populationLevel);
+
+      const provider = await providerQuery.lean();
+
+      if (!provider) {
+        console.log(
+          "❌ No provider profile found for user profile ID:",
+          userProfile._id
+        );
+        console.log(
+          "💡 Tip: User needs to create a provider profile via the create endpoint"
+        );
+        return null;
+      }
+
+      console.log("✅ Found provider profile:", provider._id);
+      return provider;
+    } catch (error) {
+      console.error("❌ Error fetching provider by user ID:", error);
+      console.error("Error details:", {
+        userId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      throw new Error("Failed to fetch provider profile");
     }
-
-    console.log('✅ Found user profile:', userProfile._id);
-
-    // Then find the provider profile using the user profile ID
-    let providerQuery = ProviderModel.findOne({
-      profile: userProfile._id,
-      isDeleted: false,
-    });
-
-    providerQuery = this.applyPopulation(providerQuery, populationLevel);
-
-    const provider = await providerQuery.lean();
-
-    if (!provider) {
-      console.log('❌ No provider profile found for user profile ID:', userProfile._id);
-      console.log('💡 Tip: User needs to create a provider profile via the create endpoint');
-      return null;
-    }
-
-    console.log('✅ Found provider profile:', provider._id);
-    return provider;
-  } catch (error) {
-    console.error("❌ Error fetching provider by user ID:", error);
-    console.error('Error details:', {
-      userId,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-    throw new Error("Failed to fetch provider profile");
   }
-}
 
   /**
    * Find nearest providers to a given location
@@ -659,14 +674,18 @@ async getProviderByUserId(
   async findProvidersByLocation(
     region: string,
     city?: string,
-    options: { 
-      serviceId?: string; 
+    options: {
+      serviceId?: string;
       limit?: number;
       populationLevel?: PopulationLevel;
     } = {}
   ): Promise<ProviderProfile[]> {
     try {
-      const { serviceId, limit = 20, populationLevel = PopulationLevel.MINIMAL } = options;
+      const {
+        serviceId,
+        limit = 20,
+        populationLevel = PopulationLevel.MINIMAL,
+      } = options;
 
       const query: any = {
         isDeleted: false,
@@ -741,11 +760,15 @@ async getProviderByUserId(
     skip?: number;
     populationLevel?: PopulationLevel;
   }): Promise<{
-    providers: (ProviderProfile & { distance?: number; distanceFormatted?: string })[];
+    providers: (ProviderProfile & {
+      distance?: number;
+      distanceFormatted?: string;
+    })[];
     total: number;
   }> {
     try {
-      const { populationLevel = PopulationLevel.STANDARD, ...restParams } = params;
+      const { populationLevel = PopulationLevel.STANDARD, ...restParams } =
+        params;
       const query: any = { isDeleted: false };
 
       // Location filters
@@ -787,24 +810,31 @@ async getProviderByUserId(
 
       // Calculate distances if user location provided
       if (restParams.userLocation) {
-        const providersWithDistance = providers
-          .map((provider) => {
-            if (provider.locationData.gpsCoordinates) {
-              const distance = this.calculateDistance(
-                restParams.userLocation!,
-                provider.locationData.gpsCoordinates
-              );
+        // Type for provider with distance
+        type ProviderWithDistance = (typeof providers)[number] & {
+          distance: number;
+          distanceFormatted: string;
+        };
 
-              return {
-                ...provider,
-                distance,
-                distanceFormatted: this.formatDistance(distance),
-              };
-            }
-            return provider;
+        const providersWithDistance: ProviderWithDistance[] = providers
+          .filter((provider) => provider.locationData.gpsCoordinates)
+          .map((provider) => {
+            const distance = this.calculateDistance(
+              restParams.userLocation!,
+              provider.locationData.gpsCoordinates!
+            );
+
+            return {
+              ...provider,
+              distance,
+              distanceFormatted: this.formatDistance(distance),
+            };
           })
-          .filter((p) => !restParams.maxDistance || (p.distance && p.distance <= restParams.maxDistance))
-          .sort((a, b) => (a.distance || 0) - (b.distance || 0));
+          .filter(
+            (p) =>
+              !restParams.maxDistance || p.distance <= restParams.maxDistance
+          )
+          .sort((a, b) => a.distance - b.distance);
 
         return { providers: providersWithDistance, total };
       }
