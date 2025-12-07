@@ -1,93 +1,86 @@
 // routes/task.routes.ts
 import { Router } from "express";
 import taskController from "../controllers/task.controller";
-import { authenticateToken } from "../middleware/auth.middleware";
-import { requireRole } from "../middleware/role.middleware";
-import { UserRole } from "../types/base.types";
+import { authenticateToken, optionalAuth } from "../middleware/auth.middleware";
+import {
+  requireCustomer,
+  requireProvider,
+  requireCustomerOrProvider,
+} from "../middleware/role.middleware";
 
 const router = Router();
 
 /**
- * Public routes (no authentication required)
+ * PUBLIC OR OPTIONAL AUTH ROUTES (SPECIFIC PATHS FIRST)
+ * These must come BEFORE /:taskId to avoid conflicts
  */
-// Search tasks - may be public depending on requirements
-router.get("/search", taskController.searchTasks);
+
+// Search tasks
+router.get(
+  "/search",
+  optionalAuth,
+  taskController.searchTasks
+);
+
+// Get recently posted tasks
+router.get(
+  "/recent",
+  optionalAuth,
+  taskController.getRecentlyPostedTasks
+);
+
+// Get all unmatched posted tasks
+router.get(
+  "/unmatched",
+  optionalAuth,
+  taskController.getAllUnmatchedPostedTasks
+);
 
 /**
- * Customer routes
+ * CUSTOMER-ONLY ROUTES (SPECIFIC PATHS)
  */
-// Create a new task (customers only)
-router.post(
-  "/",
-  authenticateToken,
-  requireRole([UserRole.CUSTOMER]),
-  taskController.createTask
-);
-
-// Publish task (customers only)
-router.post(
-  "/:taskId/publish",
-  authenticateToken,
-  requireRole([UserRole.CUSTOMER]),
-  taskController.publishTask
-);
-
-// Get customer's tasks
-router.get(
-  "/customer/my-tasks",
-  authenticateToken,
-  requireRole([UserRole.CUSTOMER]),
-  taskController.getMyTasks
-);
 
 // Get customer statistics
 router.get(
   "/customer/stats",
   authenticateToken,
-  requireRole([UserRole.CUSTOMER]),
+  requireCustomer,
   taskController.getCustomerStats
 );
 
-// Request a provider for a task (customers only)
+// Get my tasks as a customer
+router.get(
+  "/customer/my-tasks",
+  authenticateToken,
+  requireCustomer,
+  taskController.getMyTasks
+);
+
+// Request a specific provider (customer only)
 router.post(
   "/request-provider",
   authenticateToken,
-  requireRole([UserRole.CUSTOMER]),
+  requireCustomer,
   taskController.requestProvider
 );
 
-// Update task (customers only)
-router.put(
-  "/:taskId",
-  authenticateToken,
-  requireRole([UserRole.CUSTOMER]),
-  taskController.updateTask
-);
-
-// Delete task (customers only)
-router.delete(
-  "/:taskId",
-  authenticateToken,
-  requireRole([UserRole.CUSTOMER]),
-  taskController.deleteTask
-);
-
 /**
- * Provider routes
+ * PROVIDER-ONLY ROUTES (SPECIFIC PATHS)
  */
-// Get floating tasks (providers only)
+
+// Get floating tasks (provider only)
 router.get(
   "/floating",
   authenticateToken,
-  requireRole([UserRole.PROVIDER]),
+  requireProvider,
   taskController.getFloatingTasks
 );
 
-// Get tasks where provider was matched
+// Get matched tasks (provider only)
 router.get(
   "/provider/matched",
   authenticateToken,
-  requireRole([UserRole.PROVIDER]),
+  requireProvider,
   taskController.getMatchedTasks
 );
 
@@ -95,57 +88,100 @@ router.get(
 router.get(
   "/provider/stats",
   authenticateToken,
-  requireRole([UserRole.PROVIDER]),
+  requireProvider,
   taskController.getProviderStats
 );
 
-// Express interest in floating task (providers only)
+// Express interest in a task (provider only)
 router.post(
   "/express-interest",
   authenticateToken,
-  requireRole([UserRole.PROVIDER]),
+  requireProvider,
   taskController.expressInterest
 );
 
-// Accept customer's request (providers only)
+/**
+ * PARAMETERIZED ROUTES (/:taskId)
+ * These MUST come after all specific paths to avoid conflicts
+ */
+
+// Get task by ID (optional auth to show different info based on role)
+router.get(
+  "/:taskId",
+  optionalAuth,
+  taskController.getTask
+);
+
+// Create a new task (customer only)
+router.post(
+  "/",
+  authenticateToken,
+  requireCustomer,
+  taskController.createTask
+);
+
+// Update task (customer only)
+router.put(
+  "/:taskId",
+  authenticateToken,
+  requireCustomer,
+  taskController.updateTask
+);
+
+// Delete task (customer only)
+router.delete(
+  "/:taskId",
+  authenticateToken,
+  requireCustomer,
+  taskController.deleteTask
+);
+
+// Publish a task (customer only)
+router.post(
+  "/:taskId/publish",
+  authenticateToken,
+  requireCustomer,
+  taskController.publishTask
+);
+
+// Accept customer request (provider only)
 router.post(
   "/:taskId/accept",
   authenticateToken,
-  requireRole([UserRole.PROVIDER]),
+  requireProvider,
   taskController.acceptRequest
 );
 
-// Decline customer's request (providers only)
+// Decline customer request (provider only)
 router.post(
   "/:taskId/decline",
   authenticateToken,
-  requireRole([UserRole.PROVIDER]),
+  requireProvider,
   taskController.declineRequest
 );
 
-// Start task (providers only)
+// Start task (provider only)
 router.post(
   "/:taskId/start",
   authenticateToken,
-  requireRole([UserRole.PROVIDER]),
+  requireProvider,
   taskController.startTask
 );
 
-// Complete task (providers only)
+// Complete task (provider only)
 router.post(
   "/:taskId/complete",
   authenticateToken,
-  requireRole([UserRole.PROVIDER]),
+  requireProvider,
   taskController.completeTask
 );
 
-/**
- * Shared routes (customer or provider)
- */
-// Get task by ID
-router.get("/:taskId", authenticateToken, taskController.getTask);
-
-// Cancel task (customer or assigned provider)
-router.post("/:taskId/cancel", authenticateToken, taskController.cancelTask);
+// Cancel task (both customer and provider can cancel)
+router.post(
+  "/:taskId/cancel",
+  authenticateToken,
+  requireCustomerOrProvider,
+  taskController.cancelTask
+);
 
 export default router;

@@ -1,5 +1,5 @@
 // services/provider-profile.service.ts
-import { Types, PopulateOptions } from "mongoose";
+import { Types, PopulateOptions, Query } from "mongoose";
 import { ProviderModel } from "../../models/profiles/provider.model";
 import ProfileModel from "../../models/profiles/userProfile.model";
 import { ServiceModel } from "../../models/service.model";
@@ -19,6 +19,7 @@ interface FindNearestProvidersOptions {
   limit?: number;
   serviceId?: string;
   categoryId?: string;
+  populationLevel?: PopulationLevel;
 }
 
 // Population presets for different use cases
@@ -123,6 +124,21 @@ export class ProviderProfileService {
       default:
         return [];
     }
+  }
+
+  /**
+   * Apply population to a query based on population level
+   */
+  private applyPopulation<T>(
+    query: Query<T, any>,
+    populationLevel?: PopulationLevel
+  ): Query<T, any> {
+    const level = populationLevel || PopulationLevel.STANDARD;
+    const populateOptions = this.getPopulationOptions(level);
+    populateOptions.forEach((popOption) => {
+      query = query.populate(popOption);
+    });
+    return query;
   }
 
   /**
@@ -485,12 +501,7 @@ export class ProviderProfileService {
       }
 
       let providerQuery = ProviderModel.findOne(query);
-
-      // Apply population based on level
-      const populateOptions = this.getPopulationOptions(populationLevel);
-      populateOptions.forEach((popOption) => {
-        providerQuery = providerQuery.populate(popOption);
-      });
+      providerQuery = this.applyPopulation(providerQuery, populationLevel);
 
       return await providerQuery.lean();
     } catch (error) {
@@ -501,22 +512,19 @@ export class ProviderProfileService {
 
   /**
    * Get provider profile by user profile ID with configurable population
+   * NOTE: This accepts userProfileId (the _id from ProfileModel), not userId
    */
   async getProviderByProfile(
-    profileId: string,
+    userProfileId: string,
     populationLevel: PopulationLevel = PopulationLevel.STANDARD
   ): Promise<ProviderProfile | null> {
     try {
       let providerQuery = ProviderModel.findOne({
-        profile: new Types.ObjectId(profileId),
+        profile: new Types.ObjectId(userProfileId),
         isDeleted: false,
       });
 
-      // Apply population based on level
-      const populateOptions = this.getPopulationOptions(populationLevel);
-      populateOptions.forEach((popOption) => {
-        providerQuery = providerQuery.populate(popOption);
-      });
+      providerQuery = this.applyPopulation(providerQuery, populationLevel);
 
       return await providerQuery.lean();
     } catch (error) {
@@ -526,12 +534,66 @@ export class ProviderProfileService {
   }
 
   /**
+   * Get provider profile by user ID (from auth token)
+   * This resolves userId -> userProfileId -> providerProfile
+   */
+
+async getProviderByUserId(
+  userId: string,
+  populationLevel: PopulationLevel = PopulationLevel.DETAILED
+): Promise<ProviderProfile | null> {
+  try {
+    console.log('🔍 Looking for provider with userId:', userId);
+    
+    // First, find the user profile
+    const userProfile = await ProfileModel.findOne({
+      userId: new Types.ObjectId(userId),
+      isDeleted: false,
+    }).select("_id userId");
+
+    if (!userProfile) {
+      console.log('❌ No user profile found for userId:', userId);
+      console.log('💡 Tip: Make sure the user has created a basic profile first');
+      return null;
+    }
+
+    console.log('✅ Found user profile:', userProfile._id);
+
+    // Then find the provider profile using the user profile ID
+    let providerQuery = ProviderModel.findOne({
+      profile: userProfile._id,
+      isDeleted: false,
+    });
+
+    providerQuery = this.applyPopulation(providerQuery, populationLevel);
+
+    const provider = await providerQuery.lean();
+
+    if (!provider) {
+      console.log('❌ No provider profile found for user profile ID:', userProfile._id);
+      console.log('💡 Tip: User needs to create a provider profile via the create endpoint');
+      return null;
+    }
+
+    console.log('✅ Found provider profile:', provider._id);
+    return provider;
+  } catch (error) {
+    console.error("❌ Error fetching provider by user ID:", error);
+    console.error('Error details:', {
+      userId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    throw new Error("Failed to fetch provider profile");
+  }
+}
+
+  /**
    * Find nearest providers to a given location
    * Returns providers sorted by distance with formatted display
    */
   async findNearestProviders(
     userLocation: Coordinates,
-    options: FindNearestProvidersOptions & { populationLevel?: PopulationLevel } = {}
+    options: FindNearestProvidersOptions = {}
   ): Promise<NearestProviderResult[]> {
     try {
       const {
@@ -555,12 +617,7 @@ export class ProviderProfileService {
 
       // Get all providers with coordinates
       let providerQuery = ProviderModel.find(query);
-
-      // Apply population based on level
-      const populateOptions = this.getPopulationOptions(populationLevel);
-      populateOptions.forEach((popOption) => {
-        providerQuery = providerQuery.populate(popOption);
-      });
+      providerQuery = this.applyPopulation(providerQuery, populationLevel);
 
       let providers = await providerQuery.lean();
 
@@ -625,12 +682,7 @@ export class ProviderProfileService {
       }
 
       let providerQuery = ProviderModel.find(query).limit(limit);
-
-      // Apply population based on level
-      const populateOptions = this.getPopulationOptions(populationLevel);
-      populateOptions.forEach((popOption) => {
-        providerQuery = providerQuery.populate(popOption);
-      });
+      providerQuery = this.applyPopulation(providerQuery, populationLevel);
 
       return await providerQuery.lean();
     } catch (error) {
@@ -719,11 +771,7 @@ export class ProviderProfileService {
         .skip(restParams.skip || 0)
         .limit(restParams.limit || 20);
 
-      // Apply population based on level
-      const populateOptions = this.getPopulationOptions(populationLevel);
-      populateOptions.forEach((popOption) => {
-        providerQuery = providerQuery.populate(popOption);
-      });
+      providerQuery = this.applyPopulation(providerQuery, populationLevel);
 
       let providers = await providerQuery.lean();
       const total = await ProviderModel.countDocuments(query);

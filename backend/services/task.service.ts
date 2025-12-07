@@ -33,6 +33,15 @@ export class TaskService {
         status: TaskStatus.DRAFT,
       });
 
+      // Populate the created task
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
+
       return {
         message: "Task created successfully",
         task: task.toJSON(),
@@ -78,6 +87,15 @@ export class TaskService {
       task.status = TaskStatus.OPEN;
       await task.save();
 
+      // Populate after save
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
+
       // Get the matches
       const matches = task.hasMatches ? await task.findMatchingProviders() : [];
 
@@ -110,10 +128,10 @@ export class TaskService {
         isDeleted: { $ne: true },
       })
         .populate("customerId", "name email")
-        .populate("matchedProviders", "businessName locationData")
-        .populate("interestedProviders", "businessName locationData")
-        .populate("requestedProviderId", "businessName locationData")
-        .populate("assignedProviderId", "businessName locationData");
+        .populate("matchedProviders", "businessName locationData profile")
+        .populate("interestedProviders", "businessName locationData profile")
+        .populate("requestedProviderId", "businessName locationData profile")
+        .populate("assignedProviderId", "businessName locationData profile");
 
       if (!task) {
         return {
@@ -147,11 +165,11 @@ export class TaskService {
 
   /**
    * Get all tasks by customer
+   * Uses findByCustomer static method which now has population
    */
   async getCustomerTasks(customerId: string): Promise<TaskListResponse> {
     try {
       const tasks = await TaskModel.findByCustomer(customerId);
-
       return {
         message: "Tasks retrieved successfully",
         tasks: tasks.map((t) => t.toJSON()),
@@ -167,6 +185,7 @@ export class TaskService {
 
   /**
    * Get floating tasks (no matches, visible to all providers)
+   * Uses findFloatingTasks static method which now has population
    */
   async getFloatingTasks(): Promise<TaskListResponse> {
     try {
@@ -186,7 +205,82 @@ export class TaskService {
   }
 
   /**
+   * Get recently posted tasks (within last 7 days)
+   * @param daysBack - Number of days to look back (default: 7)
+   */
+  async getRecentlyPostedTasks(daysBack: number = 7): Promise<TaskListResponse> {
+    try {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+
+      const tasks = await TaskModel.find({
+        isDeleted: { $ne: true },
+        status: { 
+          $in: [
+            TaskStatus.OPEN, 
+            TaskStatus.FLOATING, 
+            TaskStatus.REQUESTED,
+            TaskStatus.ASSIGNED,
+            TaskStatus.IN_PROGRESS
+          ] 
+        },
+        createdAt: { $gte: cutoffDate },
+      })
+        .sort({ createdAt: -1 })
+        .populate("customerId", "name email")
+        .populate("matchedProviders", "businessName locationData profile")
+        .populate("interestedProviders", "businessName locationData profile")
+        .populate("requestedProviderId", "businessName locationData profile")
+        .populate("assignedProviderId", "businessName locationData profile");
+
+      return {
+        message: `Recently posted tasks (last ${daysBack} days) retrieved successfully`,
+        tasks: tasks.map((t) => t.toJSON()),
+        total: tasks.length,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve recently posted tasks",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get all unmatched posted tasks (FLOATING tasks without any matches)
+   * These are tasks that are available for any provider to express interest in
+   */
+  async getAllUnmatchedPostedTasks(): Promise<TaskListResponse> {
+    try {
+      const tasks = await TaskModel.find({
+        isDeleted: { $ne: true },
+        status: TaskStatus.FLOATING,
+        hasMatches: false,
+        $or: [
+          { matchedProviders: { $exists: false } },
+          { matchedProviders: { $size: 0 } },
+        ],
+      })
+        .sort({ createdAt: -1 })
+        .populate("customerId", "name email")
+        .populate("interestedProviders", "businessName locationData profile");
+
+      return {
+        message: "All unmatched posted tasks retrieved successfully",
+        tasks: tasks.map((t) => t.toJSON()),
+        total: tasks.length,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve unmatched posted tasks",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
    * Get tasks where provider was matched
+   * Uses findByProviderInMatches static method which now has population
    */
   async getProviderMatchedTasks(providerId: string): Promise<TaskListResponse> {
     try {
@@ -233,6 +327,15 @@ export class TaskService {
       }
 
       await task.addInterestedProvider(new Types.ObjectId(providerId));
+
+      // Populate after update
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
 
       // TODO: Send notification to customer with provider's message
 
@@ -310,6 +413,15 @@ export class TaskService {
 
       await task.requestProvider(providerIdObj);
 
+      // Populate after update
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
+
       // TODO: Send notification to provider with customer's message
 
       return {
@@ -347,6 +459,15 @@ export class TaskService {
       }
 
       await task.acceptRequest(new Types.ObjectId(providerId));
+
+      // Populate after update
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
 
       // TODO: Send notification to customer
 
@@ -391,6 +512,15 @@ export class TaskService {
       task.requestedAt = undefined;
       await task.save();
 
+      // Populate after update
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
+
       // TODO: Send notification to customer with reason
 
       return {
@@ -426,6 +556,15 @@ export class TaskService {
 
       task.status = TaskStatus.IN_PROGRESS;
       await task.save();
+
+      // Populate after update
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
 
       return {
         message: "Task started successfully",
@@ -472,6 +611,15 @@ export class TaskService {
 
       await task.markAsCompleted();
 
+      // Populate after update
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
+
       // TODO: Trigger review/rating request to customer
 
       return {
@@ -488,11 +636,13 @@ export class TaskService {
 
   /**
    * Cancel task
+   * Can be called by either the customer who created the task or the assigned provider
    */
   async cancelTask(
     userId: string,
     taskId: string,
-    reason?: string
+    reason?: string,
+    providerProfileId?: string
   ): Promise<TaskResponse> {
     try {
       const task = await TaskModel.findOne({
@@ -507,18 +657,46 @@ export class TaskService {
         };
       }
 
-      // Check if user is customer or assigned provider
+      // Check if user is customer (owner of the task)
       const isCustomer = task.customerId.toString() === userId;
-      const isProvider = task.assignedProviderId?.toString() === userId;
+      
+      // Check if user is the assigned provider
+      const isAssignedProvider = providerProfileId
+        ? task.assignedProviderId?.toString() === providerProfileId
+        : task.assignedProviderId?.toString() === userId;
 
-      if (!isCustomer && !isProvider) {
+      if (!isCustomer && !isAssignedProvider) {
         return {
           message: "Permission denied",
-          error: "You don't have permission to cancel this task",
+          error: "You don't have permission to cancel this task. Only the task creator or assigned provider can cancel.",
+        };
+      }
+
+      // Additional business rules
+      if (task.status === TaskStatus.COMPLETED) {
+        return {
+          message: "Cannot cancel task",
+          error: "Completed tasks cannot be cancelled",
+        };
+      }
+
+      if (task.status === TaskStatus.CANCELLED) {
+        return {
+          message: "Task already cancelled",
+          error: "This task has already been cancelled",
         };
       }
 
       await task.cancel(reason);
+
+      // Populate after update
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
 
       // TODO: Send notification to other party
 
@@ -565,6 +743,15 @@ export class TaskService {
 
       Object.assign(task, data);
       await task.save();
+
+      // Populate after update
+      await task.populate([
+        { path: "customerId", select: "name email" },
+        { path: "matchedProviders", select: "businessName locationData profile" },
+        { path: "interestedProviders", select: "businessName locationData profile" },
+        { path: "requestedProviderId", select: "businessName locationData profile" },
+        { path: "assignedProviderId", select: "businessName locationData profile" },
+      ]);
 
       return {
         message: "Task updated successfully",
@@ -622,6 +809,7 @@ export class TaskService {
 
   /**
    * Search tasks
+   * Uses searchTasks static method which now has population
    */
   async searchTasks(searchTerm: string): Promise<TaskListResponse> {
     try {

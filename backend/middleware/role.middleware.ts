@@ -1,10 +1,10 @@
 // middleware/role.middleware.ts
 import { Request, Response, NextFunction } from "express";
 import { UserRole } from "../types/base.types";
-import { ProviderModel } from "../models/profiles/provider.model";
+import { ProfileModel } from "../models/profiles/userProfile.model";
 
 /**
- * Middleware to check if user has the required role(s)
+ * Middleware to check if user has the required role(s) based on their profile
  * Works with the existing authenticateToken middleware
  * @param roles - Array of allowed roles
  */
@@ -24,43 +24,35 @@ export const requireRole = (roles: UserRole[]) => {
         return;
       }
 
-      // If customer role is required
-      if (roles.includes(UserRole.CUSTOMER)) {
-        // All authenticated users can act as customers
-        // Just verify they have a valid user account
-        if (req.user._id) {
-          next();
-          return;
-        }
-      }
+      // Find user profile
+      const userProfile = await ProfileModel.findOne({
+        userId: req.user._id,
+        isDeleted: { $ne: true },
+      });
 
-      // If provider role is required
-      if (roles.includes(UserRole.PROVIDER)) {
-        // Check if user has a provider profile
-        const providerProfile = await ProviderModel.findOne({
-          profile: req.user._id,
-          isDeleted: { $ne: true },
+      // Check if user has a profile
+      if (!userProfile) {
+        res.status(403).json({
+          message: "Profile required",
+          error: "User does not have a registered profile",
         });
-
-        if (!providerProfile) {
-          res.status(403).json({
-            message: "Provider access required",
-            error: "User does not have a provider profile",
-          });
-          return;
-        }
-
-        // Attach provider profile ID to request object (not modifying req.user)
-        (req as any).providerProfileId = providerProfile._id;
-        next();
         return;
       }
 
-      // If we reach here, no valid role was found
-      res.status(403).json({
-        message: "Access denied",
-        error: "User does not have the required role",
-      });
+      // Check if user's profile role matches any of the required roles
+      if (!roles.includes(userProfile.role as UserRole)) {
+        res.status(403).json({
+          message: "Access denied",
+          error: `This action requires ${roles.join(" or ")} role. Your profile role is ${userProfile.role}`,
+        });
+        return;
+      }
+
+      // Attach profile to request for downstream use
+      (req as any).userProfile = userProfile;
+      (req as any).userProfileId = userProfile._id;
+
+      next();
     } catch (error) {
       res.status(500).json({
         message: "Internal server error",
@@ -71,10 +63,10 @@ export const requireRole = (roles: UserRole[]) => {
 };
 
 /**
- * Middleware to check if user is a provider and has an approved profile
- * Attaches providerProfileId to request
+ * Middleware to allow both customers and providers based on profile role
+ * Used for shared operations
  */
-export const requireApprovedProvider = async (
+export const requireCustomerOrProvider = async (
   req: Request,
   res: Response,
   next: NextFunction
@@ -88,22 +80,36 @@ export const requireApprovedProvider = async (
       return;
     }
 
-    // Find provider profile
-    const providerProfile = await ProviderModel.findOne({
-      profile: req.user._id,
+    // Find user profile
+    const userProfile = await ProfileModel.findOne({
+      userId: req.user._id,
       isDeleted: { $ne: true },
     });
 
-    if (!providerProfile) {
+    if (!userProfile) {
       res.status(403).json({
-        message: "Provider access required",
-        error: "User does not have a provider profile",
+        message: "Profile required",
+        error: "User does not have a registered profile",
       });
       return;
     }
 
-    // Attach provider profile ID to request object
-    (req as any).providerProfileId = providerProfile._id;
+    // Check if profile role is either CUSTOMER or PROVIDER
+    if (
+      userProfile.role !== UserRole.CUSTOMER &&
+      userProfile.role !== UserRole.PROVIDER
+    ) {
+      res.status(403).json({
+        message: "Access denied",
+        error: "This action requires customer or provider role",
+      });
+      return;
+    }
+
+    // Attach profile to request
+    (req as any).userProfile = userProfile;
+    (req as any).userProfileId = userProfile._id;
+
     next();
   } catch (error) {
     res.status(500).json({
@@ -114,28 +120,137 @@ export const requireApprovedProvider = async (
 };
 
 /**
- * Middleware to optionally attach provider profile if user is a provider
- * Does not fail if user is not a provider
+ * Middleware to check if user has a profile with PROVIDER role
+ * Attaches profile to request
  */
-export const attachProviderProfile = async (
+export const requireProvider = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        message: "Authentication required",
+        error: "User not authenticated",
+      });
+      return;
+    }
+
+    // Find user profile
+    const userProfile = await ProfileModel.findOne({
+      userId: req.user._id,
+      isDeleted: { $ne: true },
+    });
+
+    if (!userProfile) {
+      res.status(403).json({
+        message: "Profile required",
+        error: "User does not have a registered profile",
+      });
+      return;
+    }
+
+    // Check if profile role is PROVIDER
+    if (userProfile.role !== UserRole.PROVIDER) {
+      res.status(403).json({
+        message: "Provider access required",
+        error: `Your profile role is ${userProfile.role}, but this action requires provider role`,
+      });
+      return;
+    }
+
+    // Attach profile to request
+    (req as any).userProfile = userProfile;
+    (req as any).userProfileId = userProfile._id;
+
+    next();
+  } catch (error) {
+    res.status(500).json({
+      message: "Internal server error",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};
+
+/**
+ * Middleware to check if user has a profile with CUSTOMER role
+ * Attaches profile to request
+ */
+export const requireCustomer = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        message: "Authentication required",
+        error: "User not authenticated",
+      });
+      return;
+    }
+
+    // Find user profile
+    const userProfile = await ProfileModel.findOne({
+      userId: req.user._id,
+      isDeleted: { $ne: true },
+    });
+
+    if (!userProfile) {
+      res.status(403).json({
+        message: "Profile required",
+        error: "User does not have a registered profile",
+      });
+      return;
+    }
+
+    // Check if profile role is CUSTOMER
+    if (userProfile.role !== UserRole.CUSTOMER) {
+      res.status(403).json({
+        message: "Customer access required",
+        error: `Your profile role is ${userProfile.role}, but this action requires customer role`,
+      });
+      return;
+    }
+
+    // Attach profile to request
+    (req as any).userProfile = userProfile;
+    (req as any).userProfileId = userProfile._id;
+
+    next();
+  } catch (error) {
+    res.status(500).json({
+      message: "Internal server error",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};
+
+/**
+ * Middleware to optionally attach user profile if it exists
+ * Does not fail if user doesn't have a profile
+ */
+export const attachUserProfile = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
     if (req.user) {
-      const providerProfile = await ProviderModel.findOne({
-        profile: req.user._id,
+      const userProfile = await ProfileModel.findOne({
+        userId: req.user._id,
         isDeleted: { $ne: true },
       });
 
-      if (providerProfile) {
-        (req as any).providerProfileId = providerProfile._id;
+      if (userProfile) {
+        (req as any).userProfile = userProfile;
+        (req as any).userProfileId = userProfile._id;
       }
     }
     next();
   } catch (error) {
-    // Don't fail - just continue without provider profile
+    // Don't fail - just continue without profile
     next();
   }
 };
@@ -184,16 +299,32 @@ export const requireOwnerOrAdmin = (ownerIdField: string = "userId") => {
 };
 
 /**
- * Helper function to get provider profile ID from request
- * Use in controllers to access the provider profile ID
+ * Helper function to get user profile from request
+ * Use in controllers to access the user profile
  */
-export const getProviderProfileId = (req: Request): string | undefined => {
-  return (req as any).providerProfileId?.toString();
+export const getUserProfile = (req: Request): any | undefined => {
+  return (req as any).userProfile;
 };
 
 /**
- * Helper function to check if request has provider profile
+ * Helper function to get user profile ID from request
+ * Use in controllers to access the user profile ID
  */
-export const hasProviderProfile = (req: Request): boolean => {
-  return !!(req as any).providerProfileId;
+export const getUserProfileId = (req: Request): string | undefined => {
+  return (req as any).userProfileId?.toString();
+};
+
+/**
+ * Helper function to check if request has user profile
+ */
+export const hasUserProfile = (req: Request): boolean => {
+  return !!(req as any).userProfile;
+};
+
+/**
+ * Helper function to get user role from profile
+ */
+export const getUserRole = (req: Request): UserRole | undefined => {
+  const profile = (req as any).userProfile;
+  return profile?.role;
 };

@@ -11,7 +11,7 @@ import {
   handleError,
   validateObjectId,
 } from "../utils/controller-utils/controller.utils";
-import { getProviderProfileId } from "../middleware/role.middleware";
+import { getUserProfileId } from "../middleware/role.middleware";
 
 /**
  * Task Controller
@@ -154,21 +154,59 @@ export class TaskController {
   }
 
   /**
+   * Get recently posted tasks
+   * GET /api/tasks/recent?days=7
+   */
+  async getRecentlyPostedTasks(req: Request, res: Response) {
+    try {
+      const { days } = req.query;
+      const daysBack = days && typeof days === "string" ? parseInt(days, 10) : 7;
+
+      if (isNaN(daysBack) || daysBack < 1 || daysBack > 365) {
+        return res.status(400).json({
+          message: "Validation error",
+          error: "Days must be a number between 1 and 365",
+        });
+      }
+
+      const result = await taskService.getRecentlyPostedTasks(daysBack);
+
+      return res.status(200).json(result);
+    } catch (error: any) {
+      return handleError(res, error);
+    }
+  }
+
+  /**
+   * Get all unmatched posted tasks
+   * GET /api/tasks/unmatched
+   */
+  async getAllUnmatchedPostedTasks(req: Request, res: Response) {
+    try {
+      const result = await taskService.getAllUnmatchedPostedTasks();
+
+      return res.status(200).json(result);
+    } catch (error: any) {
+      return handleError(res, error);
+    }
+  }
+
+  /**
    * Get tasks where provider was matched
    * GET /api/tasks/provider/matched
    */
   async getMatchedTasks(req: Request, res: Response) {
     try {
       // Get provider profile ID from middleware
-      const providerId = getProviderProfileId(req);
-      if (!providerId) {
+      const providerProfileId = getUserProfileId(req);
+      if (!providerProfileId) {
         return res.status(401).json({
           message: "Unauthorized",
           error: "Provider profile not found",
         });
       }
 
-      const result = await taskService.getProviderMatchedTasks(providerId);
+      const result = await taskService.getProviderMatchedTasks(providerProfileId);
 
       return res.status(200).json(result);
     } catch (error: any) {
@@ -183,8 +221,8 @@ export class TaskController {
   async expressInterest(req: Request, res: Response) {
     try {
       // Get provider profile ID from middleware
-      const providerId = getProviderProfileId(req);
-      if (!providerId) {
+      const providerProfileId = getUserProfileId(req);
+      if (!providerProfileId) {
         return res.status(401).json({
           message: "Unauthorized",
           error: "Provider profile not found",
@@ -207,7 +245,7 @@ export class TaskController {
         });
       }
 
-      const result = await taskService.expressInterest(providerId, data);
+      const result = await taskService.expressInterest(providerProfileId, data);
 
       if (result.error) {
         return res.status(400).json(result);
@@ -271,8 +309,8 @@ export class TaskController {
   async acceptRequest(req: Request, res: Response) {
     try {
       // Get provider profile ID from middleware
-      const providerId = getProviderProfileId(req);
-      if (!providerId) {
+      const providerProfileId = getUserProfileId(req);
+      if (!providerProfileId) {
         return res.status(401).json({
           message: "Unauthorized",
           error: "Provider profile not found",
@@ -288,7 +326,7 @@ export class TaskController {
         });
       }
 
-      const result = await taskService.acceptRequest(providerId, taskId);
+      const result = await taskService.acceptRequest(providerProfileId, taskId);
 
       if (result.error) {
         return res.status(400).json(result);
@@ -307,8 +345,8 @@ export class TaskController {
   async declineRequest(req: Request, res: Response) {
     try {
       // Get provider profile ID from middleware
-      const providerId = getProviderProfileId(req);
-      if (!providerId) {
+      const providerProfileId = getUserProfileId(req);
+      if (!providerProfileId) {
         return res.status(401).json({
           message: "Unauthorized",
           error: "Provider profile not found",
@@ -326,7 +364,7 @@ export class TaskController {
       }
 
       const result = await taskService.declineRequest(
-        providerId,
+        providerProfileId,
         taskId,
         reason
       );
@@ -348,8 +386,8 @@ export class TaskController {
   async startTask(req: Request, res: Response) {
     try {
       // Get provider profile ID from middleware
-      const providerId = getProviderProfileId(req);
-      if (!providerId) {
+      const providerProfileId = getUserProfileId(req);
+      if (!providerProfileId) {
         return res.status(401).json({
           message: "Unauthorized",
           error: "Provider profile not found",
@@ -365,7 +403,7 @@ export class TaskController {
         });
       }
 
-      const result = await taskService.startTask(providerId, taskId);
+      const result = await taskService.startTask(providerProfileId, taskId);
 
       if (result.error) {
         return res.status(400).json(result);
@@ -384,8 +422,8 @@ export class TaskController {
   async completeTask(req: Request, res: Response) {
     try {
       // Get provider profile ID from middleware
-      const providerId = getProviderProfileId(req);
-      if (!providerId) {
+      const providerProfileId = getUserProfileId(req);
+      if (!providerProfileId) {
         return res.status(401).json({
           message: "Unauthorized",
           error: "Provider profile not found",
@@ -401,7 +439,7 @@ export class TaskController {
         });
       }
 
-      const result = await taskService.completeTask(providerId, taskId);
+      const result = await taskService.completeTask(providerProfileId, taskId);
 
       if (result.error) {
         return res.status(400).json(result);
@@ -416,6 +454,7 @@ export class TaskController {
   /**
    * Cancel task
    * POST /api/tasks/:taskId/cancel
+   * Accessible by both customers and providers
    */
   async cancelTask(req: Request, res: Response) {
     try {
@@ -437,7 +476,15 @@ export class TaskController {
         });
       }
 
-      const result = await taskService.cancelTask(userId, taskId, reason);
+      // Get provider profile ID if user is a provider
+      const providerProfileId = getUserProfileId(req);
+
+      const result = await taskService.cancelTask(
+        userId,
+        taskId,
+        reason,
+        providerProfileId
+      );
 
       if (result.error) {
         return res.status(400).json(result);
@@ -511,7 +558,7 @@ export class TaskController {
       const result = await taskService.deleteTask(userId, taskId);
 
       if (result.error) {
-        return res.status(400).json(result);
+        return res.status(404).json(result);
       }
 
       return res.status(200).json(result);
@@ -572,15 +619,15 @@ export class TaskController {
   async getProviderStats(req: Request, res: Response) {
     try {
       // Get provider profile ID from middleware
-      const providerId = getProviderProfileId(req);
-      if (!providerId) {
+      const providerProfileId = getUserProfileId(req);
+      if (!providerProfileId) {
         return res.status(401).json({
           message: "Unauthorized",
           error: "Provider profile not found",
         });
       }
 
-      const result = await taskService.getProviderStats(providerId);
+      const result = await taskService.getProviderStats(providerProfileId);
 
       return res.status(200).json(result);
     } catch (error: any) {

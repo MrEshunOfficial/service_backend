@@ -521,17 +521,28 @@ taskSchema.methods.getMatchReasons = function (provider: any, services: any[]) {
 };
 
 /**
- * Static Methods
+ * Static Methods - ALL UPDATED WITH PROPER POPULATION
  */
 taskSchema.statics.findActive = function () {
-  return this.find({ isDeleted: { $ne: true } });
+  return this.find({ isDeleted: { $ne: true } })
+    .populate("customerId", "name email")
+    .populate("matchedProviders", "businessName locationData profile")
+    .populate("interestedProviders", "businessName locationData profile")
+    .populate("requestedProviderId", "businessName locationData profile")
+    .populate("assignedProviderId", "businessName locationData profile");
 };
 
 taskSchema.statics.findByCustomer = function (customerId: string) {
   return this.find({
     customerId,
     isDeleted: { $ne: true },
-  }).sort({ createdAt: -1 });
+  })
+    .sort({ createdAt: -1 })
+    .populate("customerId", "name email")
+    .populate("matchedProviders", "businessName locationData profile")
+    .populate("interestedProviders", "businessName locationData profile")
+    .populate("requestedProviderId", "businessName locationData profile")
+    .populate("assignedProviderId", "businessName locationData profile");
 };
 
 taskSchema.statics.findFloatingTasks = function () {
@@ -540,7 +551,10 @@ taskSchema.statics.findFloatingTasks = function () {
     hasMatches: false,
     isDeleted: { $ne: true },
     expiresAt: { $gt: new Date() },
-  }).sort({ createdAt: -1 });
+  })
+    .sort({ createdAt: -1 })
+    .populate("customerId", "name email")
+    .populate("interestedProviders", "businessName locationData profile");
 };
 
 taskSchema.statics.findTasksWithMatches = function () {
@@ -549,7 +563,10 @@ taskSchema.statics.findTasksWithMatches = function () {
     hasMatches: true,
     isDeleted: { $ne: true },
     expiresAt: { $gt: new Date() },
-  }).sort({ createdAt: -1 });
+  })
+    .sort({ createdAt: -1 })
+    .populate("customerId", "name email")
+    .populate("matchedProviders", "businessName locationData profile");
 };
 
 taskSchema.statics.findByProviderInMatches = function (providerId: string) {
@@ -558,7 +575,13 @@ taskSchema.statics.findByProviderInMatches = function (providerId: string) {
     status: TaskStatus.OPEN,
     isDeleted: { $ne: true },
     expiresAt: { $gt: new Date() },
-  }).sort({ createdAt: -1 });
+  })
+    .sort({ createdAt: -1 })
+    .populate("customerId", "name email")
+    .populate("matchedProviders", "businessName locationData profile")
+    .populate("interestedProviders", "businessName locationData profile")
+    .populate("requestedProviderId", "businessName locationData profile")
+    .populate("assignedProviderId", "businessName locationData profile");
 };
 
 taskSchema.statics.searchTasks = function (searchTerm: string) {
@@ -567,7 +590,13 @@ taskSchema.statics.searchTasks = function (searchTerm: string) {
     $or: [{ status: TaskStatus.OPEN }, { status: TaskStatus.FLOATING }],
     isDeleted: { $ne: true },
     expiresAt: { $gt: new Date() },
-  }).sort({ score: { $meta: "textScore" }, createdAt: -1 });
+  })
+    .sort({ score: { $meta: "textScore" }, createdAt: -1 })
+    .populate("customerId", "name email")
+    .populate("matchedProviders", "businessName locationData profile")
+    .populate("interestedProviders", "businessName locationData profile")
+    .populate("requestedProviderId", "businessName locationData profile")
+    .populate("assignedProviderId", "businessName locationData profile");
 };
 
 /**

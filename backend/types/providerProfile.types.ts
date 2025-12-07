@@ -94,4 +94,3 @@ export interface ProviderProfileResponse {
   providerProfile?: Partial<ProviderProfile>;
   error?: string;
 }
-

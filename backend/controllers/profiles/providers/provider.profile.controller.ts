@@ -1,6 +1,9 @@
 // controllers/provider-profile.controller.ts
 
-import { createProviderProfileHandler, updateProviderProfileHandler, deleteProviderProfileHandler, restoreProviderProfileHandler, getProviderProfileHandler, getProviderByProfileHandler, getMyProviderProfileHandler, findNearestProvidersHandler, findProvidersByLocationHandler, getDistanceToProviderHandler, searchProvidersHandler, addServiceToProviderHandler, removeServiceFromProviderHandler, getAvailablePrivateServicesHandler } from "./handlers/provider.profile.handlers";
+import { getDistanceToProviderHandler } from "./handlers/provider/base.handler";
+import { createProviderProfileHandler, updateProviderProfileHandler, deleteProviderProfileHandler, restoreProviderProfileHandler, addServiceToProviderHandler, removeServiceFromProviderHandler } from "./handlers/provider/crud.handler";
+import { getProviderProfileHandler, getProviderByProfileHandler, getMyProviderProfileHandler, findNearestProvidersHandler, findProvidersByLocationHandler, searchProvidersHandler, getAvailablePrivateServicesHandler } from "./handlers/provider/retrievers.handler";
+
 
 
 
