@@ -155,7 +155,17 @@ export const signup = handleAsync(
       return;
 
     const user = await authService.signup({ name, email, password });
-    const token = generateTokenAndSetCookie(res, user._id.toString());
+    
+    // Generate token with all user flags
+    const token = generateTokenAndSetCookie(
+      res, 
+      user._id.toString(),
+      {
+        isEmailVerified: user.isEmailVerified,
+        isAdmin: user.isAdmin,
+        isSuperAdmin: user.isSuperAdmin,
+      }
+    );
 
     sendSuccessResponse(res, 201, "User created successfully", {
       user: getUserResponse(user),
@@ -174,7 +184,17 @@ export const login = handleAsync(
     if (!validateRequired({ email, password }, res)) return;
 
     const user = await authService.login({ email, password });
-    const token = generateTokenAndSetCookie(res, user._id.toString());
+    
+    // Generate token with all user flags
+    const token = generateTokenAndSetCookie(
+      res, 
+      user._id.toString(),
+      {
+        isEmailVerified: user.isEmailVerified,
+        isAdmin: user.isAdmin,
+        isSuperAdmin: user.isSuperAdmin,
+      }
+    );
 
     sendSuccessResponse(res, 200, "Login successful", {
       user: getUserResponse(user),
@@ -294,7 +314,17 @@ export const refreshToken = handleAsync(
   async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.userId;
     const user = await authService.refreshToken(userId!);
-    const token = generateTokenAndSetCookie(res, user._id.toString());
+    
+    // Generate token with all user flags
+    const token = generateTokenAndSetCookie(
+      res, 
+      user._id.toString(),
+      {
+        isEmailVerified: user.isEmailVerified,
+        isAdmin: user.isAdmin,
+        isSuperAdmin: user.isSuperAdmin,
+      }
+    );
 
     sendSuccessResponse(res, 200, "Token refreshed successfully", {
       user: getUserResponse(user),
@@ -358,9 +388,6 @@ export const getAllUsers = handleAsync(
     });
   }
 );
-
-// controllers/auth.controller.ts
-// Replace your updateUserRole function with this:
 
 export const updateUserRole = handleAsync(
   async (req: AuthenticatedRequest, res: Response) => {

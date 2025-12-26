@@ -9,6 +9,7 @@ import {
   AuthenticatedRequest,
 } from "../types/user.types";
 import { oAuthService } from "../services/oauth.service";
+import { User } from "../models/user.model";
 
 export const googleAuth = async (
   req: Request<{}, AuthResponse, GoogleAuthRequestBody>,
@@ -31,15 +32,34 @@ export const googleAuth = async (
     // Authenticate with OAuth
     const result = await oAuthService.authenticateWithOAuth("google", userData);
 
-    // Generate JWT token
-    const token = generateTokenAndSetCookie(res, result.user.id.toString());
+    // Fetch complete user with all fields
+    const completeUser = await User.findById(result.user.id);
+    
+    if (!completeUser) {
+      res.status(500).json({
+        message: "User authentication failed",
+        error: "User not found after creation",
+      });
+      return;
+    }
+
+    // Generate JWT token with admin flags
+    const token = generateTokenAndSetCookie(
+      res, 
+      completeUser._id.toString(),
+      {
+        isEmailVerified: completeUser.isEmailVerified,
+        isAdmin: completeUser.isAdmin,
+        isSuperAdmin: completeUser.isSuperAdmin,
+      }
+    );
 
     res.status(200).json({
       message: "Google authentication successful",
       user: result.user,
       token,
       hasProfile: result.hasProfile,
-      profile: null, // Will be populated if profile exists
+      profile: null,
     });
   } catch (error) {
     console.error("Google auth error:", error);
@@ -71,15 +91,34 @@ export const appleAuth = async (
     // Authenticate with OAuth
     const result = await oAuthService.authenticateWithOAuth("apple", userData);
 
-    // Generate JWT token
-    const token = generateTokenAndSetCookie(res, result.user.id.toString());
+    // Fetch complete user with all fields
+    const completeUser = await User.findById(result.user.id);
+    
+    if (!completeUser) {
+      res.status(500).json({
+        message: "User authentication failed",
+        error: "User not found after creation",
+      });
+      return;
+    }
+
+    // Generate JWT token with admin flags
+    const token = generateTokenAndSetCookie(
+      res, 
+      completeUser._id.toString(),
+      {
+        isEmailVerified: completeUser.isEmailVerified,
+        isAdmin: completeUser.isAdmin,
+        isSuperAdmin: completeUser.isSuperAdmin,
+      }
+    );
 
     res.status(200).json({
       message: "Apple authentication successful",
       user: result.user,
       token,
       hasProfile: result.hasProfile,
-      profile: null, // Will be populated if profile exists
+      profile: null,
     });
   } catch (error) {
     console.error("Apple auth error:", error);

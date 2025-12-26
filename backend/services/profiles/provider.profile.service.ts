@@ -10,6 +10,7 @@ import {
   UpdateProviderProfileRequestBody,
 } from "../../types/providerProfile.types";
 import { ImageLinkingService } from "../../utils/controller-utils/ImageLinkingService";
+import { MongoDBFileService } from "../files/mongodb.files.service";
 import { osmLocationService } from "./openstreetmap.location.service";
 
 interface NearestProviderResult {
@@ -19,31 +20,29 @@ interface NearestProviderResult {
 }
 
 interface FindNearestProvidersOptions {
-  maxDistance?: number; // in kilometers
+  maxDistance?: number;
   limit?: number;
   serviceId?: string;
   categoryId?: string;
   populationLevel?: PopulationLevel;
 }
 
-// Population presets for different use cases
 export enum PopulationLevel {
-  NONE = "none", // No population at all
-  MINIMAL = "minimal", // Only IDs and names for lists
-  STANDARD = "standard", // Basic info for general queries
-  DETAILED = "detailed", // Full details for single provider views
+  NONE = "none",
+  MINIMAL = "minimal",
+  STANDARD = "standard",
+  DETAILED = "detailed",
 }
 
 export class ProviderProfileService {
   private imageLinkingService: ImageLinkingService;
+  private fileService: MongoDBFileService;
 
   constructor() {
     this.imageLinkingService = new ImageLinkingService();
+    this.fileService = new MongoDBFileService();
   }
 
-  /**
-   * Get population options based on level
-   */
   private getPopulationOptions(level: PopulationLevel): PopulateOptions[] {
     switch (level) {
       case PopulationLevel.NONE:
@@ -132,9 +131,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Apply population to a query based on population level
-   */
   private applyPopulation<T>(
     query: Query<T, any>,
     populationLevel?: PopulationLevel
@@ -147,12 +143,8 @@ export class ProviderProfileService {
     return query;
   }
 
-  /**
-   * Calculate distance between two coordinates using Haversine formula
-   * Returns distance in kilometers
-   */
   private calculateDistance(coord1: Coordinates, coord2: Coordinates): number {
-    const R = 6371; // Earth's radius in km
+    const R = 6371;
     const dLat = this.toRadians(coord2.latitude - coord1.latitude);
     const dLon = this.toRadians(coord2.longitude - coord1.longitude);
 
@@ -171,9 +163,6 @@ export class ProviderProfileService {
     return degrees * (Math.PI / 180);
   }
 
-  /**
-   * Format distance for display
-   */
   private formatDistance(km: number): string {
     if (km < 1) {
       return `${Math.round(km * 1000)}m away`;
@@ -181,10 +170,6 @@ export class ProviderProfileService {
     return `${km.toFixed(1)}km away`;
   }
 
-  /**
-   * Enrich location data using OpenStreetMap Nominatim API
-   * Automatically fills in region, city, district, locality from coordinates
-   */
   async enrichLocationData(
     ghanaPostGPS: string,
     coordinates?: Coordinates,
@@ -222,10 +207,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Verify location using OpenStreetMap
-   * Checks if provided coordinates match the Ghana Post GPS code
-   */
   async verifyLocation(
     ghanaPostGPS: string,
     coordinates: Coordinates
@@ -243,10 +224,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Geocode an address to get coordinates
-   * Useful when user provides Ghana Post GPS without coordinates
-   */
   async geocodeAddress(address: string): Promise<{
     success: boolean;
     coordinates?: Coordinates;
@@ -271,19 +248,14 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Get available private services for company-trained providers
-   */
   async getAvailablePrivateServices(providerId: string): Promise<any[]> {
     try {
-      // Check if provider is company trained
       const provider = await ProviderModel.findById(providerId);
 
       if (!provider || !provider.isCompanyTrained) {
         return [];
       }
 
-      // Get all private services
       const privateServices = await ServiceModel.find({
         isPrivate: true,
         isActive: true,
@@ -298,14 +270,81 @@ export class ProviderProfileService {
   }
 
   /**
-   * Create a new provider profile with automatic location enrichment
+   * Create file records for gallery images
    */
+  private async createGalleryImageRecords(
+    imageUrls: string[],
+    providerId: string,
+    uploaderId: string
+  ): Promise<Types.ObjectId[]> {
+    const fileIds: Types.ObjectId[] = [];
+
+    for (let i = 0; i < imageUrls.length; i++) {
+      const url = imageUrls[i];
+      const fileName = `gallery-${i + 1}-${Date.now()}`;
+
+      try {
+        const file = await this.fileService.createFile({
+          uploaderId: new Types.ObjectId(uploaderId),
+          url,
+          fileName,
+          storageProvider: "cloudinary", // Adjust based on your setup
+          entityType: "provider",
+          entityId: new Types.ObjectId(providerId),
+          label: "provider_gallery",
+          status: "active",
+        });
+
+        fileIds.push(file._id as Types.ObjectId);
+      } catch (error) {
+        console.error(`Failed to create file record for ${url}:`, error);
+      }
+    }
+
+    return fileIds;
+  }
+
+  /**
+   * Create file records for ID images
+   */
+  private async createIdImageRecords(
+    imageUrls: string[],
+    providerId: string,
+    uploaderId: string
+  ): Promise<Types.ObjectId[]> {
+    const fileIds: Types.ObjectId[] = [];
+
+    for (let i = 0; i < imageUrls.length; i++) {
+      const url = imageUrls[i];
+      const fileName = `id-image-${i + 1}-${Date.now()}`;
+
+      try {
+        const file = await this.fileService.createFile({
+          uploaderId: new Types.ObjectId(uploaderId),
+          url,
+          fileName,
+          storageProvider: "cloudinary",
+          entityType: "provider",
+          entityId: new Types.ObjectId(providerId),
+          label: "provider_id_image",
+          status: "active",
+        });
+
+        fileIds.push(file._id as Types.ObjectId);
+      } catch (error) {
+        console.error(`Failed to create file record for ID image ${url}:`, error);
+      }
+    }
+
+    return fileIds;
+  }
+
   async createProviderProfile(
     profileId: string,
     data: CreateProviderProfileRequestBody
   ): Promise<ProviderProfile> {
     try {
-      // Verify the user profile exists and has provider role
+      // Verify user profile
       const userProfile = await ProfileModel.findOne({
         userId: new Types.ObjectId(profileId),
         isDeleted: false,
@@ -319,7 +358,7 @@ export class ProviderProfileService {
         throw new Error("User must have provider role");
       }
 
-      // Check if provider profile already exists
+      // Check if provider profile exists
       const existingProvider = await ProviderModel.findOne({
         profile: userProfile._id,
         isDeleted: false,
@@ -329,7 +368,7 @@ export class ProviderProfileService {
         throw new Error("Provider profile already exists");
       }
 
-      // Enrich location data using OpenStreetMap
+      // Enrich location data
       const locationEnrichment = await this.enrichLocationData(
         data.locationData.ghanaPostGPS,
         data.locationData.gpsCoordinates,
@@ -337,7 +376,6 @@ export class ProviderProfileService {
       );
 
       if (locationEnrichment.success && locationEnrichment.location) {
-        // Merge enriched data with user-provided data
         data.locationData = {
           ...data.locationData,
           ...locationEnrichment.location,
@@ -349,7 +387,7 @@ export class ProviderProfileService {
         );
       }
 
-      // Verify service offerings (company-trained can access private services)
+      // Verify service offerings
       if (data.serviceOfferings && data.serviceOfferings.length > 0) {
         const services = await ServiceModel.find({
           _id: { $in: data.serviceOfferings },
@@ -357,7 +395,6 @@ export class ProviderProfileService {
           deletedAt: null,
         });
 
-        // Check if trying to add private services without being company trained
         const hasPrivateServices = services.some((s) => s.isPrivate);
         if (hasPrivateServices && !data.isCompanyTrained) {
           throw new Error(
@@ -370,31 +407,48 @@ export class ProviderProfileService {
         }
       }
 
-      // Create provider profile
+      // Create provider profile first (without images)
       const providerProfile = new ProviderModel({
         ...data,
         profile: userProfile._id,
+        BusinessGalleryImages: [],
+        IdDetails: data.IdDetails ? {
+          ...data.IdDetails,
+          fileImage: []
+        } : undefined,
       });
 
       await providerProfile.save();
 
-      // Link orphaned images (gallery and ID images)
+      // Process gallery images if provided
       if (data.BusinessGalleryImages && data.BusinessGalleryImages.length > 0) {
-        await this.imageLinkingService.linkMultipleImagesToProvider(
+        const galleryFileIds = await this.createGalleryImageRecords(
+          data.BusinessGalleryImages as unknown as string[], // Cast if needed
           providerProfile._id.toString(),
-          data.BusinessGalleryImages,
-          "BusinessGalleryImages",
           profileId
         );
+
+        // Update provider with gallery image IDs
+        providerProfile.BusinessGalleryImages = galleryFileIds;
+        await providerProfile.save();
       }
 
+      // Process ID images if provided
       if (data.IdDetails?.fileImage && data.IdDetails.fileImage.length > 0) {
-        await this.imageLinkingService.linkMultipleImagesToProvider(
+        const idFileIds = await this.createIdImageRecords(
+          data.IdDetails.fileImage as unknown as string[],
           providerProfile._id.toString(),
-          data.IdDetails.fileImage,
-          "IdDetails.fileImage",
           profileId
         );
+
+        // Update provider with ID image IDs
+        if (!providerProfile.IdDetails) {
+          providerProfile.IdDetails = { fileImage: [] } as any;
+        }
+        if (providerProfile.IdDetails) {
+          providerProfile.IdDetails.fileImage = idFileIds;
+          await providerProfile.save();
+        }
       }
 
       return providerProfile;
@@ -404,9 +458,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Update provider profile with location re-enrichment if needed
-   */
   async updateProviderProfile(
     providerId: string,
     data: UpdateProviderProfileRequestBody,
@@ -422,7 +473,7 @@ export class ProviderProfileService {
         throw new Error("Provider profile not found");
       }
 
-      // If updating location data, enrich it
+      // Handle location updates
       if (data.locationData) {
         const needsEnrichment =
           data.locationData.ghanaPostGPS !==
@@ -452,7 +503,55 @@ export class ProviderProfileService {
         }
       }
 
-      // Verify service offerings if being updated
+      // Handle gallery images update
+      if (data.BusinessGalleryImages && data.BusinessGalleryImages.length > 0) {
+        // Archive old gallery images
+        const oldImageIds = provider.BusinessGalleryImages || [];
+        for (const imageId of oldImageIds) {
+          try {
+            await this.fileService.archiveFile(imageId);
+          } catch (error) {
+            console.error(`Failed to archive gallery image ${imageId}:`, error);
+          }
+        }
+
+        // Create new gallery image records
+        const newGalleryFileIds = await this.createGalleryImageRecords(
+          data.BusinessGalleryImages as unknown as string[],
+          providerId,
+          updatedBy || providerId
+        );
+
+        data.BusinessGalleryImages = newGalleryFileIds as any;
+      }
+
+      // Handle ID images update
+      if (data.IdDetails?.fileImage && data.IdDetails.fileImage.length > 0) {
+        // Archive old ID images
+        const oldIdImageIds = provider.IdDetails?.fileImage || [];
+        for (const imageId of oldIdImageIds) {
+          try {
+            await this.fileService.archiveFile(imageId);
+          } catch (error) {
+            console.error(`Failed to archive ID image ${imageId}:`, error);
+          }
+        }
+
+        // Create new ID image records
+        const newIdFileIds = await this.createIdImageRecords(
+          data.IdDetails.fileImage as unknown as string[],
+          providerId,
+          updatedBy || providerId
+        );
+
+        if (!data.IdDetails) {
+          data.IdDetails = {} as any;
+        } else {
+          data.IdDetails.fileImage = newIdFileIds as any;
+        }
+      }
+
+      // Verify service offerings
       if (data.serviceOfferings && data.serviceOfferings.length > 0) {
         const services = await ServiceModel.find({
           _id: { $in: data.serviceOfferings },
@@ -486,9 +585,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Get provider profile by ID with configurable population
-   */
   async getProviderProfile(
     providerId: string,
     options: {
@@ -518,10 +614,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Get provider profile by user profile ID with configurable population
-   * NOTE: This accepts userProfileId (the _id from ProfileModel), not userId
-   */
   async getProviderByProfile(
     userProfileId: string,
     populationLevel: PopulationLevel = PopulationLevel.STANDARD
@@ -541,11 +633,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Get provider profile by user ID (from auth token)
-   * This resolves userId -> userProfileId -> providerProfile
-   */
-
   async getProviderByUserId(
     userId: string,
     populationLevel: PopulationLevel = PopulationLevel.DETAILED
@@ -553,7 +640,6 @@ export class ProviderProfileService {
     try {
       console.log("🔍 Looking for provider with userId:", userId);
 
-      // First, find the user profile
       const userProfile = await ProfileModel.findOne({
         userId: new Types.ObjectId(userId),
         isDeleted: false,
@@ -561,15 +647,11 @@ export class ProviderProfileService {
 
       if (!userProfile) {
         console.log("❌ No user profile found for userId:", userId);
-        console.log(
-          "💡 Tip: Make sure the user has created a basic profile first"
-        );
         return null;
       }
 
       console.log("✅ Found user profile:", userProfile._id);
 
-      // Then find the provider profile using the user profile ID
       let providerQuery = ProviderModel.findOne({
         profile: userProfile._id,
         isDeleted: false,
@@ -580,13 +662,7 @@ export class ProviderProfileService {
       const provider = await providerQuery.lean();
 
       if (!provider) {
-        console.log(
-          "❌ No provider profile found for user profile ID:",
-          userProfile._id
-        );
-        console.log(
-          "💡 Tip: User needs to create a provider profile via the create endpoint"
-        );
+        console.log("❌ No provider profile found");
         return null;
       }
 
@@ -594,49 +670,37 @@ export class ProviderProfileService {
       return provider;
     } catch (error) {
       console.error("❌ Error fetching provider by user ID:", error);
-      console.error("Error details:", {
-        userId,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
       throw new Error("Failed to fetch provider profile");
     }
   }
 
-  /**
-   * Find nearest providers to a given location
-   * Returns providers sorted by distance with formatted display
-   */
   async findNearestProviders(
     userLocation: Coordinates,
     options: FindNearestProvidersOptions = {}
   ): Promise<NearestProviderResult[]> {
     try {
       const {
-        maxDistance = 50, // 50km default
+        maxDistance = 50,
         limit = 10,
         serviceId,
         categoryId,
         populationLevel = PopulationLevel.STANDARD,
       } = options;
 
-      // Build query
       const query: any = {
         isDeleted: false,
         "locationData.gpsCoordinates": { $exists: true },
       };
 
-      // Filter by service if provided
       if (serviceId) {
         query.serviceOfferings = new Types.ObjectId(serviceId);
       }
 
-      // Get all providers with coordinates
       let providerQuery = ProviderModel.find(query);
       providerQuery = this.applyPopulation(providerQuery, populationLevel);
 
       let providers = await providerQuery.lean();
 
-      // Filter by category if provided (after population)
       if (categoryId) {
         providers = providers.filter((p) =>
           p?.serviceOfferings?.some(
@@ -645,7 +709,6 @@ export class ProviderProfileService {
         );
       }
 
-      // Calculate distances and filter by max distance
       const providersWithDistance: NearestProviderResult[] = providers
         .map((provider) => {
           const providerCoords = provider.locationData.gpsCoordinates!;
@@ -668,9 +731,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Find providers in a specific region/city
-   */
   async findProvidersByLocation(
     region: string,
     city?: string,
@@ -710,10 +770,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Get distance between customer and provider
-   * Returns formatted distance for display
-   */
   async getDistanceToProvider(
     customerLocation: Coordinates,
     providerId: string
@@ -743,9 +799,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Search providers with advanced filters and optional distance-based sorting
-   */
   async searchProviders(params: {
     searchTerm?: string;
     region?: string;
@@ -771,18 +824,15 @@ export class ProviderProfileService {
         params;
       const query: any = { isDeleted: false };
 
-      // Location filters
       if (restParams.region) query["locationData.region"] = restParams.region;
       if (restParams.city) query["locationData.city"] = restParams.city;
 
-      // Service filters
       if (restParams.serviceIds && restParams.serviceIds.length > 0) {
         query.serviceOfferings = {
           $in: restParams.serviceIds.map((id) => new Types.ObjectId(id)),
         };
       }
 
-      // Other filters
       if (restParams.isCompanyTrained !== undefined) {
         query.isCompanyTrained = restParams.isCompanyTrained;
       }
@@ -799,7 +849,6 @@ export class ProviderProfileService {
       let providers = await providerQuery.lean();
       const total = await ProviderModel.countDocuments(query);
 
-      // Filter by category if provided
       if (restParams.categoryId) {
         providers = providers.filter((p) =>
           p?.serviceOfferings?.some(
@@ -808,9 +857,7 @@ export class ProviderProfileService {
         );
       }
 
-      // Calculate distances if user location provided
       if (restParams.userLocation) {
-        // Type for provider with distance
         type ProviderWithDistance = (typeof providers)[number] & {
           distance: number;
           distanceFormatted: string;
@@ -846,9 +893,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Soft delete provider profile
-   */
   async deleteProviderProfile(
     providerId: string,
     deletedBy: string
@@ -860,6 +904,25 @@ export class ProviderProfileService {
         throw new Error("Provider profile not found");
       }
 
+      // Archive associated images
+      const galleryImages = provider.BusinessGalleryImages || [];
+      for (const imageId of galleryImages) {
+        try {
+          await this.fileService.archiveFile(imageId);
+        } catch (error) {
+          console.error(`Failed to archive gallery image ${imageId}:`, error);
+        }
+      }
+
+      const idImages = provider.IdDetails?.fileImage || [];
+      for (const imageId of idImages) {
+        try {
+          await this.fileService.archiveFile(imageId);
+        } catch (error) {
+          console.error(`Failed to archive ID image ${imageId}:`, error);
+        }
+      }
+
       await provider.softDelete(deletedBy);
     } catch (error) {
       console.error("Error deleting provider profile:", error);
@@ -867,15 +930,31 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Restore soft-deleted provider profile
-   */
   async restoreProviderProfile(providerId: string): Promise<void> {
     try {
       const provider = await ProviderModel.findById(providerId);
 
       if (!provider) {
         throw new Error("Provider profile not found");
+      }
+
+      // Restore associated images
+      const galleryImages = provider.BusinessGalleryImages || [];
+      for (const imageId of galleryImages) {
+        try {
+          await this.fileService.restoreFile(imageId);
+        } catch (error) {
+          console.error(`Failed to restore gallery image ${imageId}:`, error);
+        }
+      }
+
+      const idImages = provider.IdDetails?.fileImage || [];
+      for (const imageId of idImages) {
+        try {
+          await this.fileService.restoreFile(imageId);
+        } catch (error) {
+          console.error(`Failed to restore ID image ${imageId}:`, error);
+        }
       }
 
       await provider.restore();
@@ -885,10 +964,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Add service to provider's offerings
-   * Validates private service access for company-trained providers
-   */
   async addService(
     providerId: string,
     serviceId: string
@@ -903,7 +978,6 @@ export class ProviderProfileService {
         throw new Error("Provider profile not found");
       }
 
-      // Verify service exists and is active
       const service = await ServiceModel.findOne({
         _id: new Types.ObjectId(serviceId),
         isActive: true,
@@ -914,14 +988,12 @@ export class ProviderProfileService {
         throw new Error("Service not found or inactive");
       }
 
-      // Check if private service and provider is company trained
       if (service.isPrivate && !provider.isCompanyTrained) {
         throw new Error(
           "Only company-trained providers can offer private services"
         );
       }
 
-      // Check if service already added
       if (provider?.serviceOfferings?.some((s) => s.toString() === serviceId)) {
         throw new Error("Service already added to provider");
       }
@@ -936,9 +1008,6 @@ export class ProviderProfileService {
     }
   }
 
-  /**
-   * Remove service from provider's offerings
-   */
   async removeService(
     providerId: string,
     serviceId: string
@@ -963,6 +1032,404 @@ export class ProviderProfileService {
     } catch (error) {
       console.error("Error removing service from provider:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Get provider's gallery images with full file details
+   */
+  async getProviderGalleryImages(providerId: string): Promise<any[]> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      }).select("BusinessGalleryImages");
+
+      if (!provider || !provider.BusinessGalleryImages) {
+        return [];
+      }
+
+      const images = [];
+      for (const imageId of provider.BusinessGalleryImages) {
+        try {
+          const file = await this.fileService.getFileById(imageId);
+          if (file && file.status === "active") {
+            images.push(file);
+          }
+        } catch (error) {
+          console.error(`Failed to fetch gallery image ${imageId}:`, error);
+        }
+      }
+
+      return images;
+    } catch (error) {
+      console.error("Error fetching provider gallery images:", error);
+      throw new Error("Failed to fetch gallery images");
+    }
+  }
+
+  /**
+   * Get provider's ID images with full file details
+   */
+  async getProviderIdImages(providerId: string): Promise<any[]> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      }).select("IdDetails.fileImage");
+
+      if (!provider || !provider.IdDetails?.fileImage) {
+        return [];
+      }
+
+      const images = [];
+      for (const imageId of provider.IdDetails.fileImage) {
+        try {
+          const file = await this.fileService.getFileById(imageId);
+          if (file && file.status === "active") {
+            images.push(file);
+          }
+        } catch (error) {
+          console.error(`Failed to fetch ID image ${imageId}:`, error);
+        }
+      }
+
+      return images;
+    } catch (error) {
+      console.error("Error fetching provider ID images:", error);
+      throw new Error("Failed to fetch ID images");
+    }
+  }
+
+  /**
+   * Add single image to gallery
+   */
+  async addGalleryImage(
+    providerId: string,
+    imageUrl: string,
+    uploaderId: string
+  ): Promise<{ success: boolean; fileId?: Types.ObjectId; error?: string }> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!provider) {
+        return { success: false, error: "Provider not found" };
+      }
+
+      // Create file record
+      const file = await this.fileService.createFile({
+        uploaderId: new Types.ObjectId(uploaderId),
+        url: imageUrl,
+        fileName: `gallery-${Date.now()}`,
+        storageProvider: "cloudinary",
+        entityType: "provider",
+        entityId: new Types.ObjectId(providerId),
+        label: "provider_gallery",
+        status: "active",
+      });
+
+      // Add to provider's gallery
+      if (!provider.BusinessGalleryImages) {
+        provider.BusinessGalleryImages = [];
+      }
+      provider.BusinessGalleryImages.push(file._id as Types.ObjectId);
+      await provider.save();
+
+      return { success: true, fileId: file._id as Types.ObjectId };
+    } catch (error) {
+      console.error("Error adding gallery image:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+
+  /**
+   * Remove single image from gallery
+   */
+  async removeGalleryImage(
+    providerId: string,
+    fileId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!provider) {
+        return { success: false, error: "Provider not found" };
+      }
+
+      // Archive the file
+      await this.fileService.archiveFile(fileId);
+
+      // Remove from provider's gallery
+      provider.BusinessGalleryImages = provider.BusinessGalleryImages?.filter(
+        (id) => id.toString() !== fileId
+      );
+      await provider.save();
+
+      return { success: true };
+    } catch (error) {
+      console.error("Error removing gallery image:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+
+  /**
+   * Get provider's file statistics
+   */
+  async getProviderFileStats(providerId: string): Promise<{
+    galleryCount: number;
+    idImageCount: number;
+    totalSize: number;
+    formattedSize: string;
+  }> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      }).select("BusinessGalleryImages IdDetails.fileImage");
+
+      if (!provider) {
+        throw new Error("Provider not found");
+      }
+
+      const galleryCount = provider.BusinessGalleryImages?.length || 0;
+      const idImageCount = provider.IdDetails?.fileImage?.length || 0;
+
+      // Calculate total size
+      let totalSize = 0;
+      const allImageIds = [
+        ...(provider.BusinessGalleryImages || []),
+        ...(provider.IdDetails?.fileImage || []),
+      ];
+
+      for (const imageId of allImageIds) {
+        try {
+          const file = await this.fileService.getFileById(imageId);
+          if (file && file.fileSize) {
+            totalSize += file.fileSize;
+          }
+        } catch (error) {
+          console.error(`Failed to get file size for ${imageId}:`, error);
+        }
+      }
+
+      // Format size
+      const formatSize = (bytes: number): string => {
+        if (bytes === 0) return "0 Bytes";
+        const k = 1024;
+        const sizes = ["Bytes", "KB", "MB", "GB"];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+      };
+
+      return {
+        galleryCount,
+        idImageCount,
+        totalSize,
+        formattedSize: formatSize(totalSize),
+      };
+    } catch (error) {
+      console.error("Error getting provider file stats:", error);
+      throw new Error("Failed to get file statistics");
+    }
+  }
+
+  /**
+   * Cleanup orphaned files for a provider
+   * Removes file records that are not referenced by the provider
+   */
+  async cleanupOrphanedFiles(providerId: string): Promise<{
+    cleaned: number;
+    errors: string[];
+  }> {
+    const errors: string[] = [];
+    let cleaned = 0;
+
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      }).select("BusinessGalleryImages IdDetails.fileImage");
+
+      if (!provider) {
+        throw new Error("Provider not found");
+      }
+
+      // Get all referenced image IDs
+      const referencedIds = new Set([
+        ...(provider.BusinessGalleryImages || []).map((id) => id.toString()),
+        ...(provider.IdDetails?.fileImage || []).map((id) => id.toString()),
+      ]);
+
+      // Get all files for this provider
+      const allFiles = await this.fileService.getFilesByEntity(
+        "provider",
+        providerId,
+        { status: "active" }
+      );
+
+      // Archive files that are not referenced
+      for (const file of allFiles) {
+        if (!referencedIds.has(file._id.toString())) {
+          try {
+            await this.fileService.archiveFile(file._id);
+            cleaned++;
+          } catch (error) {
+            errors.push(
+              `Failed to archive orphaned file ${file._id}: ${
+                error instanceof Error ? error.message : "Unknown error"
+              }`
+            );
+          }
+        }
+      }
+
+      return { cleaned, errors };
+    } catch (error) {
+      errors.push(
+        `Cleanup failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+      return { cleaned, errors };
+    }
+  }
+
+  /**
+   * Bulk update gallery images
+   * Replaces all gallery images with new ones
+   */
+  async bulkUpdateGalleryImages(
+    providerId: string,
+    imageUrls: string[],
+    uploaderId: string
+  ): Promise<{ success: boolean; fileIds?: Types.ObjectId[]; error?: string }> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!provider) {
+        return { success: false, error: "Provider not found" };
+      }
+
+      // Archive old images
+      const oldImageIds = provider.BusinessGalleryImages || [];
+      for (const imageId of oldImageIds) {
+        try {
+          await this.fileService.archiveFile(imageId);
+        } catch (error) {
+          console.error(`Failed to archive old image ${imageId}:`, error);
+        }
+      }
+
+      // Create new image records
+      const newFileIds = await this.createGalleryImageRecords(
+        imageUrls,
+        providerId,
+        uploaderId
+      );
+
+      // Update provider
+      provider.BusinessGalleryImages = newFileIds;
+      await provider.save();
+
+      return { success: true, fileIds: newFileIds };
+    } catch (error) {
+      console.error("Error bulk updating gallery images:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+
+  /**
+   * Validate all provider images
+   * Checks if all referenced files exist and are active
+   */
+  async validateProviderImages(providerId: string): Promise<{
+    valid: boolean;
+    issues: string[];
+    galleryIssues: number;
+    idImageIssues: number;
+  }> {
+    const issues: string[] = [];
+    let galleryIssues = 0;
+    let idImageIssues = 0;
+
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      }).select("BusinessGalleryImages IdDetails.fileImage");
+
+      if (!provider) {
+        throw new Error("Provider not found");
+      }
+
+      // Validate gallery images
+      const galleryIds = provider.BusinessGalleryImages || [];
+      for (const imageId of galleryIds) {
+        try {
+          const file = await this.fileService.getFileById(imageId);
+          if (!file) {
+            issues.push(`Gallery image ${imageId} not found in file system`);
+            galleryIssues++;
+          } else if (file.status !== "active") {
+            issues.push(`Gallery image ${imageId} is not active (status: ${file.status})`);
+            galleryIssues++;
+          }
+        } catch (error) {
+          issues.push(`Failed to validate gallery image ${imageId}`);
+          galleryIssues++;
+        }
+      }
+
+      // Validate ID images
+      const idImageIds = provider.IdDetails?.fileImage || [];
+      for (const imageId of idImageIds) {
+        try {
+          const file = await this.fileService.getFileById(imageId);
+          if (!file) {
+            issues.push(`ID image ${imageId} not found in file system`);
+            idImageIssues++;
+          } else if (file.status !== "active") {
+            issues.push(`ID image ${imageId} is not active (status: ${file.status})`);
+            idImageIssues++;
+          }
+        } catch (error) {
+          issues.push(`Failed to validate ID image ${imageId}`);
+          idImageIssues++;
+        }
+      }
+
+      return {
+        valid: issues.length === 0,
+        issues,
+        galleryIssues,
+        idImageIssues,
+      };
+    } catch (error) {
+      console.error("Error validating provider images:", error);
+      return {
+        valid: false,
+        issues: [error instanceof Error ? error.message : "Unknown error"],
+        galleryIssues: 0,
+        idImageIssues: 0,
+      };
     }
   }
 }

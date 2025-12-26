@@ -1,4 +1,6 @@
+// ============================================
 // controllers/files/cloudinary.file.controller.ts
+// ============================================
 import multer from "multer";
 import { CloudinaryFileService } from "../../services/files/claudinary.files.service";
 import { MongoDBFileService } from "../../services/files/mongodb.files.service";
@@ -40,8 +42,7 @@ export class CloudinaryFileController {
   public getServiceCover;
   public deleteServiceCover;
   public getOptimizedServiceCover;
-
-  constructor(cloudinaryConfig: any) {
+    constructor(cloudinaryConfig: any) {
     this.cloudinaryService = new CloudinaryFileService(cloudinaryConfig);
     this.mongoService = new MongoDBFileService();
     this.uploadMiddleware = upload;
@@ -59,7 +60,6 @@ export class CloudinaryFileController {
       this.cloudinaryService,
       this.mongoService
     );
-
     // Bind profile picture handlers
     this.uploadProfilePicture = this.profilePictureHandler.upload.bind(
       this.profilePictureHandler

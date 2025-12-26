@@ -9,12 +9,6 @@ import {
   AuthenticatedRequest,
 } from "../../../../utils/controller-utils/controller.utils";
 
-interface OptimizationParams {
-  width?: number;
-  height?: number;
-  quality?: number | "auto";
-  format?: string;
-}
 
 export class ProfilePictureHandler {
   private cloudinaryService: CloudinaryFileService;

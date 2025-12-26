@@ -9,19 +9,6 @@ import {
 } from "../types/category.types";
 import { ImageLinkingService } from "../utils/controller-utils/ImageLinkingService";
 
-/**
- * Category Service
- *
- * Handles all business logic for category management including:
- * - Category creation with automatic cover image linking
- * - Category updates and retrieval
- * - Category cover image management
- * - Hierarchical category operations (parent/child relationships)
- * - Soft deletion and restoration
- * - Search and filtering
- *
- * Integrates with ImageLinkingService for seamless cover image management
- */
 export class CategoryService {
   private fileService: MongoDBFileService;
   private imageLinkingService: ImageLinkingService;

@@ -40,7 +40,6 @@ export class MongoDBFileController {
   public deleteServiceCover;
   public getServiceCoverStats;
   public cleanupArchivedServiceCovers;
-
   constructor() {
     this.fileService = new MongoDBFileService();
     this.profilePictureHandlers = new ProfilePictureHandlers(this.fileService);

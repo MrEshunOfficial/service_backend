@@ -1,4 +1,4 @@
-// services/openstreetmap-location.service.ts - FIXED VERSION
+// services/openstreetmap-location.service.ts
 import axios, { AxiosInstance } from "axios";
 import { UserLocation, Coordinates } from "../../types/base.types";
 
@@ -64,22 +64,6 @@ interface GeocodingResult {
   error?: string;
 }
 
-/**
- * OpenStreetMap Location Service - FIXED VERSION
- * 
- * KEY FIXES:
- * 1. Fixed HTTP Referer header (required by Nominatim)
- * 2. Improved error handling and logging
- * 3. Added retry logic for failed requests
- * 4. Better response validation
- * 5. Increased rate limit buffer (1.5 seconds instead of 1)
- * 
- * IMPORTANT: Nominatim Usage Policy
- * - Maximum 1 request per second (we use 1.5s to be safe)
- * - Must provide valid User-Agent and Referer
- * - Respect rate limits or you'll get blocked
- * - For production with high volume, consider third-party providers or self-hosting
- */
 export class OpenStreetMapLocationService {
   private client: AxiosInstance;
   private readonly baseURL = "https://nominatim.openstreetmap.org";
@@ -87,7 +71,7 @@ export class OpenStreetMapLocationService {
   private readonly email: string;
   private readonly referer: string;
   private lastRequestTime: number = 0;
-  private readonly minRequestInterval: number = 1500; // 1.5 seconds (safer than 1s)
+  private readonly minRequestInterval: number = 1500;
   private requestCount: number = 0;
 
   constructor(config?: { 
@@ -101,10 +85,10 @@ export class OpenStreetMapLocationService {
 
     this.client = axios.create({
       baseURL: this.baseURL,
-      timeout: 15000, // Increased timeout
+      timeout: 15000,
       headers: {
         "User-Agent": this.userAgent,
-        "Referer": this.referer, // CRITICAL: Required by Nominatim
+        "Referer": this.referer,
         "Accept": "application/json",
         "Accept-Language": "en",
       },
@@ -649,5 +633,5 @@ export class OpenStreetMapLocationService {
 export const osmLocationService = new OpenStreetMapLocationService({
   userAgent: "GhanaServicePlatform/1.0",
   email: "christophereshun91@gmail.com",
-  referer: "https://ghanaserviceplatform.com", // Your future production domain
+  referer: "https://ghanaserviceplatform.com",
 });
