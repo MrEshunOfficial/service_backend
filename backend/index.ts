@@ -15,9 +15,7 @@ import {
 } from "./config/cloudinary.config";
 import fileRoutes from "./routes/files.routes";
 import categoryRoutes from "./routes/category.routes";
-
-// import locationRoutes from "./routes/profiles/location.routes";
-// import providerProfileRoutes from "./routes/profiles/provider.profile.routes";
+import providerProfileRoutes from "./routes/profiles/provider.profile.routes";
 
 // import taskRoutes from "./routes/task.routes";
 
@@ -66,6 +64,7 @@ async function startServer() {
     app.use("/api/profiles", profileRoutes);
     app.use("/api/categories", categoryRoutes);
     app.use("/api/services", serviceRoutes);
+    app.use("/api/providers", providerProfileRoutes);
 
     // Error handling middleware
     app.use(

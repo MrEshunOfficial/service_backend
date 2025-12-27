@@ -1,4 +1,4 @@
-// services/provider-profile.service.ts
+// services/provider-profile.service.ts (UPDATED)
 import { Types, PopulateOptions, Query } from "mongoose";
 import { ProviderModel } from "../../models/profiles/provider.model";
 import ProfileModel from "../../models/profiles/userProfile.model";
@@ -8,7 +8,8 @@ import {
   ProviderProfile,
   CreateProviderProfileRequestBody,
   UpdateProviderProfileRequestBody,
-} from "../../types/providerProfile.types";
+  PopulationLevel,
+} from "../../types/profiles/providerProfile.types";
 import { ImageLinkingService } from "../../utils/controller-utils/ImageLinkingService";
 import { MongoDBFileService } from "../files/mongodb.files.service";
 import { osmLocationService } from "./openstreetmap.location.service";
@@ -25,13 +26,6 @@ interface FindNearestProvidersOptions {
   serviceId?: string;
   categoryId?: string;
   populationLevel?: PopulationLevel;
-}
-
-export enum PopulationLevel {
-  NONE = "none",
-  MINIMAL = "minimal",
-  STANDARD = "standard",
-  DETAILED = "detailed",
 }
 
 export class ProviderProfileService {
@@ -110,11 +104,17 @@ export class ProviderProfileService {
           {
             path: "serviceOfferings",
             select:
-              "title description slug servicePricing categoryId isPrivate isActive",
-            populate: {
-              path: "categoryId",
-              select: "catName slug",
-            },
+              "title description slug servicePricing categoryId isPrivate isActive coverImage",
+            populate: [
+              {
+                path: "categoryId",
+                select: "catName slug",
+              },
+              {
+                path: "coverImage",
+                select: "url thumbnailUrl fileName uploadedAt",
+              },
+            ],
           },
           {
             path: "BusinessGalleryImages",
@@ -248,105 +248,96 @@ export class ProviderProfileService {
     }
   }
 
-  async getAvailablePrivateServices(providerId: string): Promise<any[]> {
+  /**
+   * Link orphaned ID images to newly created provider profile
+   * Called during provider creation to check for pre-uploaded ID images
+   */
+  private async linkOrphanedIdImages(
+    providerId: string,
+    userId: string
+  ): Promise<Types.ObjectId[]> {
     try {
-      const provider = await ProviderModel.findById(providerId);
+      // Find all orphaned ID images for this user
+      const files = await this.fileService.getFilesByEntity(
+        "provider",
+        userId,
+        {
+          status: "active",
+        }
+      );
 
-      if (!provider || !provider.isCompanyTrained) {
+      const idImages = files.filter((f) => f.label === "provider_id_image");
+
+      if (idImages.length === 0) {
         return [];
       }
 
-      const privateServices = await ServiceModel.find({
-        isPrivate: true,
-        isActive: true,
-        deletedAt: null,
-      }).select("_id title description categoryId servicePricing");
+      const fileIds = idImages.map((img) => img._id as Types.ObjectId);
 
-      return privateServices;
+      // Link them to the provider using the image linking service
+      await this.imageLinkingService.linkMultipleImagesToProvider(
+        providerId,
+        fileIds,
+        "IdDetails.fileImage",
+        userId
+      );
+
+      return fileIds;
     } catch (error) {
-      console.error("Error fetching private services:", error);
-      throw new Error("Failed to fetch available private services");
+      console.error("Error linking orphaned ID images:", error);
+      return [];
     }
   }
 
   /**
-   * Create file records for gallery images
+   * Link orphaned gallery images to provider profile
+   * Called when adding gallery images after profile creation
    */
-  private async createGalleryImageRecords(
-    imageUrls: string[],
+  private async linkOrphanedGalleryImages(
     providerId: string,
-    uploaderId: string
+    userId: string
   ): Promise<Types.ObjectId[]> {
-    const fileIds: Types.ObjectId[] = [];
-
-    for (let i = 0; i < imageUrls.length; i++) {
-      const url = imageUrls[i];
-      const fileName = `gallery-${i + 1}-${Date.now()}`;
-
-      try {
-        const file = await this.fileService.createFile({
-          uploaderId: new Types.ObjectId(uploaderId),
-          url,
-          fileName,
-          storageProvider: "cloudinary", // Adjust based on your setup
-          entityType: "provider",
-          entityId: new Types.ObjectId(providerId),
-          label: "provider_gallery",
+    try {
+      // Find all orphaned gallery images for this user
+      const files = await this.fileService.getFilesByEntity(
+        "provider",
+        userId,
+        {
           status: "active",
-        });
+        }
+      );
 
-        fileIds.push(file._id as Types.ObjectId);
-      } catch (error) {
-        console.error(`Failed to create file record for ${url}:`, error);
+      const galleryImages = files.filter((f) => f.label === "provider_gallery");
+
+      if (galleryImages.length === 0) {
+        return [];
       }
+
+      const fileIds = galleryImages.map((img) => img._id as Types.ObjectId);
+
+      // Link them to the provider using the image linking service
+      await this.imageLinkingService.linkMultipleImagesToProvider(
+        providerId,
+        fileIds,
+        "BusinessGalleryImages",
+        userId
+      );
+
+      return fileIds;
+    } catch (error) {
+      console.error("Error linking orphaned gallery images:", error);
+      return [];
     }
-
-    return fileIds;
-  }
-
-  /**
-   * Create file records for ID images
-   */
-  private async createIdImageRecords(
-    imageUrls: string[],
-    providerId: string,
-    uploaderId: string
-  ): Promise<Types.ObjectId[]> {
-    const fileIds: Types.ObjectId[] = [];
-
-    for (let i = 0; i < imageUrls.length; i++) {
-      const url = imageUrls[i];
-      const fileName = `id-image-${i + 1}-${Date.now()}`;
-
-      try {
-        const file = await this.fileService.createFile({
-          uploaderId: new Types.ObjectId(uploaderId),
-          url,
-          fileName,
-          storageProvider: "cloudinary",
-          entityType: "provider",
-          entityId: new Types.ObjectId(providerId),
-          label: "provider_id_image",
-          status: "active",
-        });
-
-        fileIds.push(file._id as Types.ObjectId);
-      } catch (error) {
-        console.error(`Failed to create file record for ID image ${url}:`, error);
-      }
-    }
-
-    return fileIds;
   }
 
   async createProviderProfile(
-    profileId: string,
+    userId: string,
     data: CreateProviderProfileRequestBody
   ): Promise<ProviderProfile> {
     try {
       // Verify user profile
       const userProfile = await ProfileModel.findOne({
-        userId: new Types.ObjectId(profileId),
+        userId: new Types.ObjectId(userId),
         isDeleted: false,
       });
 
@@ -407,53 +398,322 @@ export class ProviderProfileService {
         }
       }
 
-      // Create provider profile first (without images)
+      // Create provider profile WITHOUT images initially
       const providerProfile = new ProviderModel({
         ...data,
         profile: userProfile._id,
         BusinessGalleryImages: [],
-        IdDetails: data.IdDetails ? {
-          ...data.IdDetails,
-          fileImage: []
-        } : undefined,
+        IdDetails: data.IdDetails
+          ? {
+              idType: data.IdDetails.idType,
+              idNumber: data.IdDetails.idNumber,
+              fileImage: [],
+            }
+          : undefined,
       });
 
       await providerProfile.save();
 
-      // Process gallery images if provided
-      if (data.BusinessGalleryImages && data.BusinessGalleryImages.length > 0) {
-        const galleryFileIds = await this.createGalleryImageRecords(
-          data.BusinessGalleryImages as unknown as string[], // Cast if needed
-          providerProfile._id.toString(),
-          profileId
-        );
+      // NOW link any orphaned ID images that were uploaded before profile creation
+      const idImageIds = await this.linkOrphanedIdImages(
+        providerProfile._id.toString(),
+        userId
+      );
 
-        // Update provider with gallery image IDs
-        providerProfile.BusinessGalleryImages = galleryFileIds;
+      if (idImageIds.length > 0 && providerProfile.IdDetails) {
+        providerProfile.IdDetails.fileImage = idImageIds;
         await providerProfile.save();
       }
 
-      // Process ID images if provided
-      if (data.IdDetails?.fileImage && data.IdDetails.fileImage.length > 0) {
-        const idFileIds = await this.createIdImageRecords(
-          data.IdDetails.fileImage as unknown as string[],
-          providerProfile._id.toString(),
-          profileId
-        );
+      // Gallery images are typically added AFTER profile creation, but check anyway
+      const galleryImageIds = await this.linkOrphanedGalleryImages(
+        providerProfile._id.toString(),
+        userId
+      );
 
-        // Update provider with ID image IDs
-        if (!providerProfile.IdDetails) {
-          providerProfile.IdDetails = { fileImage: [] } as any;
-        }
-        if (providerProfile.IdDetails) {
-          providerProfile.IdDetails.fileImage = idFileIds;
-          await providerProfile.save();
-        }
+      if (galleryImageIds.length > 0) {
+        providerProfile.BusinessGalleryImages = galleryImageIds;
+        await providerProfile.save();
       }
 
       return providerProfile;
     } catch (error) {
       console.error("Error creating provider profile:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add gallery images to an existing provider profile
+   * This is the typical flow - gallery images added AFTER profile creation
+   */
+  async addGalleryImages(
+    providerId: string,
+    userId: string
+  ): Promise<ProviderProfile> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!provider) {
+        throw new Error("Provider profile not found");
+      }
+
+      // Link any orphaned gallery images
+      const newGalleryImageIds = await this.linkOrphanedGalleryImages(
+        providerId,
+        userId
+      );
+
+      if (newGalleryImageIds.length === 0) {
+        throw new Error("No gallery images found to add");
+      }
+
+      // Append to existing gallery images (don't replace)
+      const existingIds = provider.BusinessGalleryImages || [];
+      provider.BusinessGalleryImages = [...existingIds, ...newGalleryImageIds];
+
+      await provider.save();
+
+      return provider;
+    } catch (error) {
+      console.error("Error adding gallery images:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Remove specific gallery image from provider
+   */
+  async removeGalleryImage(
+    providerId: string,
+    imageId: string,
+    userId: string
+  ): Promise<ProviderProfile> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!provider) {
+        throw new Error("Provider profile not found");
+      }
+
+      // Remove from array
+      provider.BusinessGalleryImages = (
+        provider.BusinessGalleryImages || []
+      ).filter((id) => id.toString() !== imageId);
+
+      await provider.save();
+
+      // Archive the file
+      await this.fileService.archiveFile(imageId);
+
+      return provider;
+    } catch (error) {
+      console.error("Error removing gallery image:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add ID images to provider profile
+   * Can be called after profile creation if user didn't upload ID images initially
+   */
+  async addIdImages(
+    providerId: string,
+    userId: string
+  ): Promise<ProviderProfile> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!provider) {
+        throw new Error("Provider profile not found");
+      }
+
+      // Link new orphaned ID images
+      const newIdImageIds = await this.linkOrphanedIdImages(providerId, userId);
+
+      if (newIdImageIds.length === 0) {
+        throw new Error("No ID images found to add");
+      }
+
+      // Initialize IdDetails if it doesn't exist
+      if (!provider.IdDetails) {
+        throw new Error(
+          "Cannot add ID images without IdDetails. Update profile with ID type and number first."
+        );
+      }
+
+      // Append to existing ID images (don't replace)
+      const existingIds = provider.IdDetails.fileImage || [];
+      provider.IdDetails.fileImage = [...existingIds, ...newIdImageIds];
+
+      await provider.save();
+
+      return provider;
+    } catch (error) {
+      console.error("Error adding ID images:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Replace all ID images (archive old ones)
+   * Use when user wants to completely replace their ID documentation
+   */
+  async replaceIdImages(
+    providerId: string,
+    userId: string
+  ): Promise<ProviderProfile> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!provider) {
+        throw new Error("Provider profile not found");
+      }
+
+      // Archive old ID images
+      const oldIdImageIds = provider.IdDetails?.fileImage || [];
+      for (const imageId of oldIdImageIds) {
+        try {
+          await this.fileService.archiveFile(imageId);
+        } catch (error) {
+          console.error(`Failed to archive ID image ${imageId}:`, error);
+        }
+      }
+
+      // Link new orphaned ID images
+      const newIdImageIds = await this.linkOrphanedIdImages(providerId, userId);
+
+      if (newIdImageIds.length === 0) {
+        throw new Error("No ID images found to replace with");
+      }
+
+      // Update provider with new ID images (replace completely)
+      if (provider.IdDetails) {
+        provider.IdDetails.fileImage = newIdImageIds;
+      }
+
+      await provider.save();
+
+      return provider;
+    } catch (error) {
+      console.error("Error replacing ID images:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Remove specific ID image from provider
+   */
+  async removeIdImage(
+    providerId: string,
+    imageId: string,
+    userId: string
+  ): Promise<ProviderProfile> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!provider) {
+        throw new Error("Provider profile not found");
+      }
+
+      if (!provider.IdDetails || !provider.IdDetails.fileImage) {
+        throw new Error("No ID images to remove");
+      }
+
+      // Remove from array
+      provider.IdDetails.fileImage = provider.IdDetails.fileImage.filter(
+        (id) => id.toString() !== imageId
+      );
+
+      await provider.save();
+
+      // Archive the file
+      await this.fileService.archiveFile(imageId);
+
+      return provider;
+    } catch (error) {
+      console.error("Error removing ID image:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update ID details (type and number) along with images
+   * Useful when user needs to change ID type (e.g., from Passport to National ID)
+   */
+  async updateIdDetails(
+    providerId: string,
+    userId: string,
+    idDetails: {
+      idType: string;
+      idNumber: string;
+      replaceImages?: boolean; // If true, archives old images and links new ones
+    }
+  ): Promise<ProviderProfile> {
+    try {
+      const provider = await ProviderModel.findOne({
+        _id: new Types.ObjectId(providerId),
+        isDeleted: false,
+      });
+
+      if (!provider) {
+        throw new Error("Provider profile not found");
+      }
+
+      // Handle image replacement if requested
+      let imageIds: Types.ObjectId[] = [];
+
+      if (idDetails.replaceImages) {
+        // Archive old images
+        const oldIdImageIds = provider.IdDetails?.fileImage || [];
+        for (const imageId of oldIdImageIds) {
+          try {
+            await this.fileService.archiveFile(imageId);
+          } catch (error) {
+            console.error(`Failed to archive ID image ${imageId}:`, error);
+          }
+        }
+
+        // Link new images
+        const newIdImageIds = await this.linkOrphanedIdImages(
+          providerId,
+          userId
+        );
+        if (newIdImageIds.length > 0) {
+          imageIds = newIdImageIds;
+        }
+      } else {
+        // Keep existing images
+        imageIds = provider.IdDetails?.fileImage || [];
+      }
+
+      // Update ID details
+      provider.IdDetails = {
+        idType: idDetails.idType as any,
+        idNumber: idDetails.idNumber,
+        fileImage: imageIds,
+      };
+
+      await provider.save();
+
+      return provider;
+    } catch (error) {
+      console.error("Error updating ID details:", error);
       throw error;
     }
   }
@@ -503,54 +763,6 @@ export class ProviderProfileService {
         }
       }
 
-      // Handle gallery images update
-      if (data.BusinessGalleryImages && data.BusinessGalleryImages.length > 0) {
-        // Archive old gallery images
-        const oldImageIds = provider.BusinessGalleryImages || [];
-        for (const imageId of oldImageIds) {
-          try {
-            await this.fileService.archiveFile(imageId);
-          } catch (error) {
-            console.error(`Failed to archive gallery image ${imageId}:`, error);
-          }
-        }
-
-        // Create new gallery image records
-        const newGalleryFileIds = await this.createGalleryImageRecords(
-          data.BusinessGalleryImages as unknown as string[],
-          providerId,
-          updatedBy || providerId
-        );
-
-        data.BusinessGalleryImages = newGalleryFileIds as any;
-      }
-
-      // Handle ID images update
-      if (data.IdDetails?.fileImage && data.IdDetails.fileImage.length > 0) {
-        // Archive old ID images
-        const oldIdImageIds = provider.IdDetails?.fileImage || [];
-        for (const imageId of oldIdImageIds) {
-          try {
-            await this.fileService.archiveFile(imageId);
-          } catch (error) {
-            console.error(`Failed to archive ID image ${imageId}:`, error);
-          }
-        }
-
-        // Create new ID image records
-        const newIdFileIds = await this.createIdImageRecords(
-          data.IdDetails.fileImage as unknown as string[],
-          providerId,
-          updatedBy || providerId
-        );
-
-        if (!data.IdDetails) {
-          data.IdDetails = {} as any;
-        } else {
-          data.IdDetails.fileImage = newIdFileIds as any;
-        }
-      }
-
       // Verify service offerings
       if (data.serviceOfferings && data.serviceOfferings.length > 0) {
         const services = await ServiceModel.find({
@@ -574,8 +786,11 @@ export class ProviderProfileService {
         }
       }
 
-      // Update provider profile
-      Object.assign(provider, data);
+      // Update provider profile (without touching images)
+      // Images are updated through separate methods: addGalleryImages, removeGalleryImage, updateIdImages
+      const { BusinessGalleryImages, IdDetails, ...updateData } = data;
+
+      Object.assign(provider, updateData);
       await provider.save();
 
       return provider;
@@ -610,25 +825,6 @@ export class ProviderProfileService {
       return await providerQuery.lean();
     } catch (error) {
       console.error("Error fetching provider profile:", error);
-      throw new Error("Failed to fetch provider profile");
-    }
-  }
-
-  async getProviderByProfile(
-    userProfileId: string,
-    populationLevel: PopulationLevel = PopulationLevel.STANDARD
-  ): Promise<ProviderProfile | null> {
-    try {
-      let providerQuery = ProviderModel.findOne({
-        profile: new Types.ObjectId(userProfileId),
-        isDeleted: false,
-      });
-
-      providerQuery = this.applyPopulation(providerQuery, populationLevel);
-
-      return await providerQuery.lean();
-    } catch (error) {
-      console.error("Error fetching provider by profile:", error);
       throw new Error("Failed to fetch provider profile");
     }
   }
@@ -961,475 +1157,6 @@ export class ProviderProfileService {
     } catch (error) {
       console.error("Error restoring provider profile:", error);
       throw error;
-    }
-  }
-
-  async addService(
-    providerId: string,
-    serviceId: string
-  ): Promise<ProviderProfile> {
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      });
-
-      if (!provider) {
-        throw new Error("Provider profile not found");
-      }
-
-      const service = await ServiceModel.findOne({
-        _id: new Types.ObjectId(serviceId),
-        isActive: true,
-        deletedAt: null,
-      });
-
-      if (!service) {
-        throw new Error("Service not found or inactive");
-      }
-
-      if (service.isPrivate && !provider.isCompanyTrained) {
-        throw new Error(
-          "Only company-trained providers can offer private services"
-        );
-      }
-
-      if (provider?.serviceOfferings?.some((s) => s.toString() === serviceId)) {
-        throw new Error("Service already added to provider");
-      }
-
-      provider?.serviceOfferings?.push(new Types.ObjectId(serviceId));
-      await provider.save();
-
-      return provider;
-    } catch (error) {
-      console.error("Error adding service to provider:", error);
-      throw error;
-    }
-  }
-
-  async removeService(
-    providerId: string,
-    serviceId: string
-  ): Promise<ProviderProfile> {
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      });
-
-      if (!provider) {
-        throw new Error("Provider profile not found");
-      }
-
-      provider.serviceOfferings = provider?.serviceOfferings?.filter(
-        (s) => s.toString() !== serviceId
-      );
-
-      await provider.save();
-
-      return provider;
-    } catch (error) {
-      console.error("Error removing service from provider:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get provider's gallery images with full file details
-   */
-  async getProviderGalleryImages(providerId: string): Promise<any[]> {
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      }).select("BusinessGalleryImages");
-
-      if (!provider || !provider.BusinessGalleryImages) {
-        return [];
-      }
-
-      const images = [];
-      for (const imageId of provider.BusinessGalleryImages) {
-        try {
-          const file = await this.fileService.getFileById(imageId);
-          if (file && file.status === "active") {
-            images.push(file);
-          }
-        } catch (error) {
-          console.error(`Failed to fetch gallery image ${imageId}:`, error);
-        }
-      }
-
-      return images;
-    } catch (error) {
-      console.error("Error fetching provider gallery images:", error);
-      throw new Error("Failed to fetch gallery images");
-    }
-  }
-
-  /**
-   * Get provider's ID images with full file details
-   */
-  async getProviderIdImages(providerId: string): Promise<any[]> {
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      }).select("IdDetails.fileImage");
-
-      if (!provider || !provider.IdDetails?.fileImage) {
-        return [];
-      }
-
-      const images = [];
-      for (const imageId of provider.IdDetails.fileImage) {
-        try {
-          const file = await this.fileService.getFileById(imageId);
-          if (file && file.status === "active") {
-            images.push(file);
-          }
-        } catch (error) {
-          console.error(`Failed to fetch ID image ${imageId}:`, error);
-        }
-      }
-
-      return images;
-    } catch (error) {
-      console.error("Error fetching provider ID images:", error);
-      throw new Error("Failed to fetch ID images");
-    }
-  }
-
-  /**
-   * Add single image to gallery
-   */
-  async addGalleryImage(
-    providerId: string,
-    imageUrl: string,
-    uploaderId: string
-  ): Promise<{ success: boolean; fileId?: Types.ObjectId; error?: string }> {
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      });
-
-      if (!provider) {
-        return { success: false, error: "Provider not found" };
-      }
-
-      // Create file record
-      const file = await this.fileService.createFile({
-        uploaderId: new Types.ObjectId(uploaderId),
-        url: imageUrl,
-        fileName: `gallery-${Date.now()}`,
-        storageProvider: "cloudinary",
-        entityType: "provider",
-        entityId: new Types.ObjectId(providerId),
-        label: "provider_gallery",
-        status: "active",
-      });
-
-      // Add to provider's gallery
-      if (!provider.BusinessGalleryImages) {
-        provider.BusinessGalleryImages = [];
-      }
-      provider.BusinessGalleryImages.push(file._id as Types.ObjectId);
-      await provider.save();
-
-      return { success: true, fileId: file._id as Types.ObjectId };
-    } catch (error) {
-      console.error("Error adding gallery image:", error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      };
-    }
-  }
-
-  /**
-   * Remove single image from gallery
-   */
-  async removeGalleryImage(
-    providerId: string,
-    fileId: string
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      });
-
-      if (!provider) {
-        return { success: false, error: "Provider not found" };
-      }
-
-      // Archive the file
-      await this.fileService.archiveFile(fileId);
-
-      // Remove from provider's gallery
-      provider.BusinessGalleryImages = provider.BusinessGalleryImages?.filter(
-        (id) => id.toString() !== fileId
-      );
-      await provider.save();
-
-      return { success: true };
-    } catch (error) {
-      console.error("Error removing gallery image:", error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      };
-    }
-  }
-
-  /**
-   * Get provider's file statistics
-   */
-  async getProviderFileStats(providerId: string): Promise<{
-    galleryCount: number;
-    idImageCount: number;
-    totalSize: number;
-    formattedSize: string;
-  }> {
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      }).select("BusinessGalleryImages IdDetails.fileImage");
-
-      if (!provider) {
-        throw new Error("Provider not found");
-      }
-
-      const galleryCount = provider.BusinessGalleryImages?.length || 0;
-      const idImageCount = provider.IdDetails?.fileImage?.length || 0;
-
-      // Calculate total size
-      let totalSize = 0;
-      const allImageIds = [
-        ...(provider.BusinessGalleryImages || []),
-        ...(provider.IdDetails?.fileImage || []),
-      ];
-
-      for (const imageId of allImageIds) {
-        try {
-          const file = await this.fileService.getFileById(imageId);
-          if (file && file.fileSize) {
-            totalSize += file.fileSize;
-          }
-        } catch (error) {
-          console.error(`Failed to get file size for ${imageId}:`, error);
-        }
-      }
-
-      // Format size
-      const formatSize = (bytes: number): string => {
-        if (bytes === 0) return "0 Bytes";
-        const k = 1024;
-        const sizes = ["Bytes", "KB", "MB", "GB"];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
-      };
-
-      return {
-        galleryCount,
-        idImageCount,
-        totalSize,
-        formattedSize: formatSize(totalSize),
-      };
-    } catch (error) {
-      console.error("Error getting provider file stats:", error);
-      throw new Error("Failed to get file statistics");
-    }
-  }
-
-  /**
-   * Cleanup orphaned files for a provider
-   * Removes file records that are not referenced by the provider
-   */
-  async cleanupOrphanedFiles(providerId: string): Promise<{
-    cleaned: number;
-    errors: string[];
-  }> {
-    const errors: string[] = [];
-    let cleaned = 0;
-
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      }).select("BusinessGalleryImages IdDetails.fileImage");
-
-      if (!provider) {
-        throw new Error("Provider not found");
-      }
-
-      // Get all referenced image IDs
-      const referencedIds = new Set([
-        ...(provider.BusinessGalleryImages || []).map((id) => id.toString()),
-        ...(provider.IdDetails?.fileImage || []).map((id) => id.toString()),
-      ]);
-
-      // Get all files for this provider
-      const allFiles = await this.fileService.getFilesByEntity(
-        "provider",
-        providerId,
-        { status: "active" }
-      );
-
-      // Archive files that are not referenced
-      for (const file of allFiles) {
-        if (!referencedIds.has(file._id.toString())) {
-          try {
-            await this.fileService.archiveFile(file._id);
-            cleaned++;
-          } catch (error) {
-            errors.push(
-              `Failed to archive orphaned file ${file._id}: ${
-                error instanceof Error ? error.message : "Unknown error"
-              }`
-            );
-          }
-        }
-      }
-
-      return { cleaned, errors };
-    } catch (error) {
-      errors.push(
-        `Cleanup failed: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
-      return { cleaned, errors };
-    }
-  }
-
-  /**
-   * Bulk update gallery images
-   * Replaces all gallery images with new ones
-   */
-  async bulkUpdateGalleryImages(
-    providerId: string,
-    imageUrls: string[],
-    uploaderId: string
-  ): Promise<{ success: boolean; fileIds?: Types.ObjectId[]; error?: string }> {
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      });
-
-      if (!provider) {
-        return { success: false, error: "Provider not found" };
-      }
-
-      // Archive old images
-      const oldImageIds = provider.BusinessGalleryImages || [];
-      for (const imageId of oldImageIds) {
-        try {
-          await this.fileService.archiveFile(imageId);
-        } catch (error) {
-          console.error(`Failed to archive old image ${imageId}:`, error);
-        }
-      }
-
-      // Create new image records
-      const newFileIds = await this.createGalleryImageRecords(
-        imageUrls,
-        providerId,
-        uploaderId
-      );
-
-      // Update provider
-      provider.BusinessGalleryImages = newFileIds;
-      await provider.save();
-
-      return { success: true, fileIds: newFileIds };
-    } catch (error) {
-      console.error("Error bulk updating gallery images:", error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      };
-    }
-  }
-
-  /**
-   * Validate all provider images
-   * Checks if all referenced files exist and are active
-   */
-  async validateProviderImages(providerId: string): Promise<{
-    valid: boolean;
-    issues: string[];
-    galleryIssues: number;
-    idImageIssues: number;
-  }> {
-    const issues: string[] = [];
-    let galleryIssues = 0;
-    let idImageIssues = 0;
-
-    try {
-      const provider = await ProviderModel.findOne({
-        _id: new Types.ObjectId(providerId),
-        isDeleted: false,
-      }).select("BusinessGalleryImages IdDetails.fileImage");
-
-      if (!provider) {
-        throw new Error("Provider not found");
-      }
-
-      // Validate gallery images
-      const galleryIds = provider.BusinessGalleryImages || [];
-      for (const imageId of galleryIds) {
-        try {
-          const file = await this.fileService.getFileById(imageId);
-          if (!file) {
-            issues.push(`Gallery image ${imageId} not found in file system`);
-            galleryIssues++;
-          } else if (file.status !== "active") {
-            issues.push(`Gallery image ${imageId} is not active (status: ${file.status})`);
-            galleryIssues++;
-          }
-        } catch (error) {
-          issues.push(`Failed to validate gallery image ${imageId}`);
-          galleryIssues++;
-        }
-      }
-
-      // Validate ID images
-      const idImageIds = provider.IdDetails?.fileImage || [];
-      for (const imageId of idImageIds) {
-        try {
-          const file = await this.fileService.getFileById(imageId);
-          if (!file) {
-            issues.push(`ID image ${imageId} not found in file system`);
-            idImageIssues++;
-          } else if (file.status !== "active") {
-            issues.push(`ID image ${imageId} is not active (status: ${file.status})`);
-            idImageIssues++;
-          }
-        } catch (error) {
-          issues.push(`Failed to validate ID image ${imageId}`);
-          idImageIssues++;
-        }
-      }
-
-      return {
-        valid: issues.length === 0,
-        issues,
-        galleryIssues,
-        idImageIssues,
-      };
-    } catch (error) {
-      console.error("Error validating provider images:", error);
-      return {
-        valid: false,
-        issues: [error instanceof Error ? error.message : "Unknown error"],
-        galleryIssues: 0,
-        idImageIssues: 0,
-      };
     }
   }
 }

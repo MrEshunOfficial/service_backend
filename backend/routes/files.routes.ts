@@ -260,4 +260,194 @@ router.delete(
   mongoController.deleteServiceCover
 );
 
+// ============================================
+// PROVIDER ID IMAGES ROUTES
+// ============================================
+
+// Cloudinary operations (upload, delete)
+// IMPORTANT: Upload uses authenticated user's ID, management uses providerId
+// This allows users to upload ID images BEFORE creating provider profile
+
+// Upload multiple ID images (uses authenticated userId)
+router.post(
+  "/cloudinary/provider/id-images/upload-multiple",
+  authenticateToken,
+  cloudinaryController.uploadMiddleware.array("idImages", 2), // Max 2 files (front and back)
+  cloudinaryController.uploadProviderIdImagesMultiple
+);
+
+// Upload single ID image (uses authenticated userId)
+router.post(
+  "/cloudinary/provider/id-images/upload",
+  authenticateToken,
+  cloudinaryController.uploadMiddleware.single("idImage"),
+  cloudinaryController.uploadProviderIdImageSingle
+);
+
+// Delete ID image from Cloudinary (by providerId after profile creation)
+router.delete(
+  "/cloudinary/provider/:providerId/id-images/:fileId",
+  authenticateToken,
+  cloudinaryController.deleteProviderIdImage
+);
+
+// MongoDB operations (metadata, history, stats, archive/restore)
+// IMPORTANT: Place specific routes BEFORE :fileId routes
+
+// Get ID images history (by providerId)
+router.get(
+  "/provider/:providerId/id-images/history/all",
+  authenticateToken,
+  mongoController.getProviderIdImagesHistory
+);
+
+// Get ID images statistics (by providerId)
+router.get(
+  "/provider/:providerId/id-images/stats/overview",
+  authenticateToken,
+  mongoController.getProviderIdImagesStats
+);
+
+// Update ID image metadata
+router.patch(
+  "/provider/:providerId/id-images/:fileId/metadata",
+  authenticateToken,
+  mongoController.updateProviderIdImageMetadata
+);
+
+// Archive ID image
+router.post(
+  "/provider/:providerId/id-images/:fileId/archive",
+  authenticateToken,
+  mongoController.archiveProviderIdImage
+);
+
+// Restore archived ID image
+router.post(
+  "/provider/:providerId/id-images/:fileId/restore",
+  authenticateToken,
+  mongoController.restoreProviderIdImage
+);
+
+// Permanently delete ID image
+router.delete(
+  "/provider/:providerId/id-images/:fileId",
+  authenticateToken,
+  mongoController.deleteProviderIdImage
+);
+
+// Get single ID image
+router.get(
+  "/provider/:providerId/id-images/:fileId",
+  authenticateToken,
+  mongoController.getProviderIdImageRecord
+);
+
+// Get all active ID images
+router.get(
+  "/provider/:providerId/id-images",
+  authenticateToken,
+  mongoController.getProviderIdImagesRecords
+);
+
+// ============================================
+// PROVIDER GALLERY IMAGES ROUTES
+// ============================================
+
+// Cloudinary operations (upload, delete, optimize)
+// IMPORTANT: Upload can use userId (before profile) or providerId (after profile)
+
+// Upload multiple gallery images (uses authenticated userId)
+router.post(
+  "/cloudinary/provider/gallery/upload-multiple",
+  authenticateToken,
+  cloudinaryController.uploadMiddleware.array("galleryImages", 10), // Max 10 at once
+  cloudinaryController.uploadProviderGalleryImagesMultiple
+);
+
+// Upload single gallery image (uses authenticated userId)
+router.post(
+  "/cloudinary/provider/gallery/upload",
+  authenticateToken,
+  cloudinaryController.uploadMiddleware.single("galleryImage"),
+  cloudinaryController.uploadProviderGalleryImageSingle
+);
+
+// Get optimized gallery image (by providerId)
+router.get(
+  "/cloudinary/provider/:providerId/gallery/:fileId/optimized",
+  cloudinaryController.getOptimizedProviderGalleryImage // Public route
+);
+
+// Delete gallery image from Cloudinary (by providerId)
+router.delete(
+  "/cloudinary/provider/:providerId/gallery/:fileId",
+  authenticateToken,
+  cloudinaryController.deleteProviderGalleryImage
+);
+
+// MongoDB operations (metadata, history, stats, archive/restore)
+// IMPORTANT: Place specific routes BEFORE :fileId routes
+
+// Get gallery images history (by providerId)
+router.get(
+  "/provider/:providerId/gallery/history/all",
+  authenticateToken,
+  mongoController.getProviderGalleryImagesHistory
+);
+
+// Get gallery images statistics (by providerId)
+router.get(
+  "/provider/:providerId/gallery/stats/overview",
+  authenticateToken,
+  mongoController.getProviderGalleryImagesStats
+);
+
+// Cleanup old archived gallery images (by providerId)
+router.delete(
+  "/provider/:providerId/gallery/cleanup",
+  authenticateToken,
+  mongoController.cleanupArchivedProviderGalleryImages
+);
+
+// Update gallery image metadata
+router.patch(
+  "/provider/:providerId/gallery/:fileId/metadata",
+  authenticateToken,
+  mongoController.updateProviderGalleryImageMetadata
+);
+
+// Archive gallery image
+router.post(
+  "/provider/:providerId/gallery/:fileId/archive",
+  authenticateToken,
+  mongoController.archiveProviderGalleryImage
+);
+
+// Restore archived gallery image
+router.post(
+  "/provider/:providerId/gallery/:fileId/restore",
+  authenticateToken,
+  mongoController.restoreProviderGalleryImage
+);
+
+// Permanently delete gallery image
+router.delete(
+  "/provider/:providerId/gallery/:fileId",
+  authenticateToken,
+  mongoController.deleteProviderGalleryImage
+);
+
+// Get single gallery image (PUBLIC, by providerId)
+router.get(
+  "/provider/:providerId/gallery/:fileId",
+  mongoController.getProviderGalleryImageRecord
+);
+
+// Get all active gallery images (PUBLIC, by providerId)
+router.get(
+  "/provider/:providerId/gallery",
+  mongoController.getProviderGalleryImagesRecords
+);
+
 export default router;

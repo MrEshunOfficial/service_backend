@@ -5,7 +5,7 @@ import {
   handleError,
   validateObjectId,
   AuthenticatedRequest,
-} from "../../../utils/controller-utils/controller.utils";
+} from "../../../../utils/controller-utils/controller.utils";
 
 /**
  * Handler for profile retrieval operations

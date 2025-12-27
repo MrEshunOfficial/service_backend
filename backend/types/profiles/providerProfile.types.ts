@@ -6,7 +6,14 @@ import {
   IdDetails,
   SoftDeletable,
   UserLocation,
-} from "./base.types";
+} from "../base.types";
+
+export enum PopulationLevel {
+  NONE = "none",
+  MINIMAL = "minimal",
+  STANDARD = "standard",
+  DETAILED = "detailed",
+}
 
 /**
  * Primary Provider Profile Entity
@@ -65,7 +72,8 @@ export interface ProviderProfileMethods {
 /**
  * Static Methods Interface
  */
-export interface ProviderProfileModel extends Model<ProviderProfile, {}, ProviderProfileMethods> {
+export interface ProviderProfileModel
+  extends Model<ProviderProfile, {}, ProviderProfileMethods> {
   findActive(): Promise<ProviderProfile[]>;
   findByLocation(region: string, city?: string): Promise<ProviderProfile[]>;
   findByProfile(profileId: string): Promise<ProviderProfile | null>;

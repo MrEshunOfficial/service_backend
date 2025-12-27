@@ -2,7 +2,7 @@
 import { Types, HydratedDocument, Model } from "mongoose";
 import { BaseEntity, SoftDeletable } from "./base.types";
 import { Service } from "./service.types";
-import { ProviderProfile } from "./providerProfile.types";
+import { ProviderProfile } from "./profiles/providerProfile.types";
 
 /**
  * Task Priority Levels (Urgency)

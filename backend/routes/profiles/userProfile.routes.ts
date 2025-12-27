@@ -1,6 +1,6 @@
 // routes/profiles/userProfile.route.ts
 import { Router } from "express";
-import { UserProfileController } from "../../controllers/profiles/userProfile.controller";
+import { UserProfileController } from "../../controllers/profiles/user/userProfile.controller";
 import {
   authenticateToken,
   requireAdmin,

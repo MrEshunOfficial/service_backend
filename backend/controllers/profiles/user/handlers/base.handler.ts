@@ -1,8 +1,8 @@
 // controllers/profiles/handlers/base.handler.ts
 import { Response } from "express";
-import { UserProfileService } from "../../../services/profiles/userProfile.service";
-import { CreateProfileRequestBody } from "../../../types/profiles/user.profile.types";
-import { AuthenticatedRequest } from "../../../utils/controller-utils/controller.utils";
+import { UserProfileService } from "../../../../services/profiles/userProfile.service";
+import { CreateProfileRequestBody } from "../../../../types/profiles/user.profile.types";
+import { AuthenticatedRequest } from "../../../../utils/controller-utils/controller.utils";
 
 /**
  * Base handler with common utilities for all profile handlers

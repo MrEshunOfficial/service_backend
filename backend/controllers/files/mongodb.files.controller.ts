@@ -1,14 +1,22 @@
+// ============================================
 // controllers/files/mongodb.file.controller.ts
+// ============================================
 import { MongoDBFileService } from "../../services/files/mongodb.files.service";
 import { CategoryCoverHandlers } from "./handlers/mongodb.handlers/category-cover.handler";
 import { ProfilePictureHandlers } from "./handlers/mongodb.handlers/profile-picture.handler";
 import { ServiceCoverHandlers } from "./handlers/mongodb.handlers/service-cover.handler";
+import {
+  ProviderIdImagesHandlers,
+  ProviderGalleryImagesHandlers,
+} from "./handlers/mongodb.handlers/provider-files.handlers";
 
 export class MongoDBFileController {
   private fileService: MongoDBFileService;
   private profilePictureHandlers: ProfilePictureHandlers;
   private categoryCoverHandlers: CategoryCoverHandlers;
   private serviceCoverHandlers: ServiceCoverHandlers;
+  private providerIdImagesHandlers: ProviderIdImagesHandlers;
+  private providerGalleryImagesHandlers: ProviderGalleryImagesHandlers;
 
   // Profile Picture Endpoints
   public getProfilePictureRecord;
@@ -40,13 +48,43 @@ export class MongoDBFileController {
   public deleteServiceCover;
   public getServiceCoverStats;
   public cleanupArchivedServiceCovers;
+
+  // Provider ID Images Endpoints
+  public getProviderIdImagesRecords;
+  public getProviderIdImageRecord;
+  public getProviderIdImagesHistory;
+  public updateProviderIdImageMetadata;
+  public archiveProviderIdImage;
+  public restoreProviderIdImage;
+  public deleteProviderIdImage;
+  public getProviderIdImagesStats;
+
+  // Provider Gallery Images Endpoints
+  public getProviderGalleryImagesRecords;
+  public getProviderGalleryImageRecord;
+  public getProviderGalleryImagesHistory;
+  public updateProviderGalleryImageMetadata;
+  public archiveProviderGalleryImage;
+  public restoreProviderGalleryImage;
+  public deleteProviderGalleryImage;
+  public getProviderGalleryImagesStats;
+  public cleanupArchivedProviderGalleryImages;
+
   constructor() {
     this.fileService = new MongoDBFileService();
     this.profilePictureHandlers = new ProfilePictureHandlers(this.fileService);
     this.categoryCoverHandlers = new CategoryCoverHandlers(this.fileService);
     this.serviceCoverHandlers = new ServiceCoverHandlers(this.fileService);
+    this.providerIdImagesHandlers = new ProviderIdImagesHandlers(
+      this.fileService
+    );
+    this.providerGalleryImagesHandlers = new ProviderGalleryImagesHandlers(
+      this.fileService
+    );
 
-    // Bind profile picture handlers
+    // ============================================
+    // Bind Profile Picture Handlers
+    // ============================================
     this.getProfilePictureRecord = this.profilePictureHandlers.getRecord.bind(
       this.profilePictureHandlers
     );
@@ -78,7 +116,9 @@ export class MongoDBFileController {
         this.profilePictureHandlers
       );
 
-    // Bind category cover handlers
+    // ============================================
+    // Bind Category Cover Handlers
+    // ============================================
     this.getCategoryCoverRecord = this.categoryCoverHandlers.getRecord.bind(
       this.categoryCoverHandlers
     );
@@ -106,7 +146,9 @@ export class MongoDBFileController {
         this.categoryCoverHandlers
       );
 
-    // Bind service cover handlers
+    // ============================================
+    // Bind Service Cover Handlers
+    // ============================================
     this.getServiceCoverRecord = this.serviceCoverHandlers.getRecord.bind(
       this.serviceCoverHandlers
     );
@@ -129,5 +171,77 @@ export class MongoDBFileController {
     );
     this.cleanupArchivedServiceCovers =
       this.serviceCoverHandlers.cleanupArchived.bind(this.serviceCoverHandlers);
+
+    // ============================================
+    // Bind Provider ID Images Handlers
+    // ============================================
+    this.getProviderIdImagesRecords =
+      this.providerIdImagesHandlers.getRecords.bind(
+        this.providerIdImagesHandlers
+      );
+    this.getProviderIdImageRecord =
+      this.providerIdImagesHandlers.getRecord.bind(
+        this.providerIdImagesHandlers
+      );
+    this.getProviderIdImagesHistory =
+      this.providerIdImagesHandlers.getHistory.bind(
+        this.providerIdImagesHandlers
+      );
+    this.updateProviderIdImageMetadata =
+      this.providerIdImagesHandlers.updateMetadata.bind(
+        this.providerIdImagesHandlers
+      );
+    this.archiveProviderIdImage = this.providerIdImagesHandlers.archive.bind(
+      this.providerIdImagesHandlers
+    );
+    this.restoreProviderIdImage = this.providerIdImagesHandlers.restore.bind(
+      this.providerIdImagesHandlers
+    );
+    this.deleteProviderIdImage = this.providerIdImagesHandlers.delete.bind(
+      this.providerIdImagesHandlers
+    );
+    this.getProviderIdImagesStats = this.providerIdImagesHandlers.getStats.bind(
+      this.providerIdImagesHandlers
+    );
+
+    // ============================================
+    // Bind Provider Gallery Images Handlers
+    // ============================================
+    this.getProviderGalleryImagesRecords =
+      this.providerGalleryImagesHandlers.getRecords.bind(
+        this.providerGalleryImagesHandlers
+      );
+    this.getProviderGalleryImageRecord =
+      this.providerGalleryImagesHandlers.getRecord.bind(
+        this.providerGalleryImagesHandlers
+      );
+    this.getProviderGalleryImagesHistory =
+      this.providerGalleryImagesHandlers.getHistory.bind(
+        this.providerGalleryImagesHandlers
+      );
+    this.updateProviderGalleryImageMetadata =
+      this.providerGalleryImagesHandlers.updateMetadata.bind(
+        this.providerGalleryImagesHandlers
+      );
+    this.archiveProviderGalleryImage =
+      this.providerGalleryImagesHandlers.archive.bind(
+        this.providerGalleryImagesHandlers
+      );
+    this.restoreProviderGalleryImage =
+      this.providerGalleryImagesHandlers.restore.bind(
+        this.providerGalleryImagesHandlers
+      );
+    this.deleteProviderGalleryImage =
+      this.providerGalleryImagesHandlers.delete.bind(
+        this.providerGalleryImagesHandlers
+      );
+    this.getProviderGalleryImagesStats =
+      this.providerGalleryImagesHandlers.getStats.bind(
+        this.providerGalleryImagesHandlers
+      );
+    this.cleanupArchivedProviderGalleryImages =
+      this.providerGalleryImagesHandlers.cleanupArchived.bind(
+        this.providerGalleryImagesHandlers
+      );
   }
 }

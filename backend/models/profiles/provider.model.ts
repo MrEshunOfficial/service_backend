@@ -1,20 +1,24 @@
 // models/provider-profile.model.ts
 import { Schema, model, HydratedDocument } from "mongoose";
 import { idType } from "../../types/base.types";
-import { ProviderProfile, ProviderProfileModel, ProviderProfileMethods } from "../../types/providerProfile.types";
+import {
+  ProviderProfile,
+  ProviderProfileModel,
+  ProviderProfileMethods,
+} from "../../types/profiles/providerProfile.types";
 
 /**
  * Coordinates Sub-Schema
  */
 const coordinatesSchema = new Schema(
   {
-    latitude: { 
-      type: Number, 
-      required: true 
+    latitude: {
+      type: Number,
+      required: true,
     },
-    longitude: { 
-      type: Number, 
-      required: true 
+    longitude: {
+      type: Number,
+      required: true,
     },
   },
   { _id: false }
@@ -25,45 +29,45 @@ const coordinatesSchema = new Schema(
  */
 const userLocationSchema = new Schema(
   {
-    ghanaPostGPS: { 
-      type: String, 
-      required: true, 
-      trim: true 
+    ghanaPostGPS: {
+      type: String,
+      required: true,
+      trim: true,
     },
-    nearbyLandmark: { 
-      type: String, 
-      trim: true 
+    nearbyLandmark: {
+      type: String,
+      trim: true,
     },
-    region: { 
-      type: String, 
-      trim: true 
+    region: {
+      type: String,
+      trim: true,
     },
-    city: { 
-      type: String, 
-      trim: true 
+    city: {
+      type: String,
+      trim: true,
     },
-    district: { 
-      type: String, 
-      trim: true 
+    district: {
+      type: String,
+      trim: true,
     },
-    locality: { 
-      type: String, 
-      trim: true 
+    locality: {
+      type: String,
+      trim: true,
     },
-    streetName: { 
-      type: String, 
-      trim: true 
+    streetName: {
+      type: String,
+      trim: true,
     },
-    houseNumber: { 
-      type: String, 
-      trim: true 
+    houseNumber: {
+      type: String,
+      trim: true,
     },
-    gpsCoordinates: { 
-      type: coordinatesSchema 
+    gpsCoordinates: {
+      type: coordinatesSchema,
     },
-    isAddressVerified: { 
-      type: Boolean, 
-      default: false 
+    isAddressVerified: {
+      type: Boolean,
+      default: false,
     },
     sourceProvider: {
       type: String,
@@ -78,23 +82,23 @@ const userLocationSchema = new Schema(
  */
 const contactDetailsSchema = new Schema(
   {
-    primaryContact: { 
-      type: String, 
-      required: true, 
-      trim: true 
+    primaryContact: {
+      type: String,
+      required: true,
+      trim: true,
     },
-    secondaryContact: { 
-      type: String, 
-      trim: true 
+    secondaryContact: {
+      type: String,
+      trim: true,
     },
-    businessContact: { 
-      type: String, 
-      trim: true 
+    businessContact: {
+      type: String,
+      trim: true,
     },
-    businessEmail: { 
-      type: String, 
-      trim: true, 
-      lowercase: true 
+    businessEmail: {
+      type: String,
+      trim: true,
+      lowercase: true,
     },
   },
   { _id: false }
@@ -110,10 +114,10 @@ const idDetailsSchema = new Schema(
       enum: Object.values(idType),
       required: true,
     },
-    idNumber: { 
-      type: String, 
-      required: true, 
-      trim: true 
+    idNumber: {
+      type: String,
+      required: true,
+      trim: true,
     },
     fileImage: [
       {
@@ -131,13 +135,13 @@ const idDetailsSchema = new Schema(
  */
 const workingHoursSchema = new Schema(
   {
-    start: { 
-      type: String, 
-      required: true 
+    start: {
+      type: String,
+      required: true,
     },
-    end: { 
-      type: String, 
-      required: true 
+    end: {
+      type: String,
+      required: true,
     },
   },
   { _id: false }
@@ -161,16 +165,16 @@ const providerProfileSchema = new Schema<
     },
 
     // Business & Identity Information
-    businessName: { 
-      type: String, 
-      trim: true 
+    businessName: {
+      type: String,
+      trim: true,
     },
-    IdDetails: { 
+    IdDetails: {
       type: idDetailsSchema,
     },
-    isCompanyTrained: { 
-      type: Boolean, 
-      default: false 
+    isCompanyTrained: {
+      type: Boolean,
+      default: false,
     },
 
     // Service Details
@@ -188,19 +192,19 @@ const providerProfileSchema = new Schema<
     ],
 
     // Contact & Location
-    providerContactInfo: { 
-      type: contactDetailsSchema, 
-      required: true 
+    providerContactInfo: {
+      type: contactDetailsSchema,
+      required: true,
     },
-    locationData: { 
-      type: userLocationSchema, 
-      required: true 
+    locationData: {
+      type: userLocationSchema,
+      required: true,
     },
 
     // Availability & Scheduling
-    isAlwaysAvailable: { 
-      type: Boolean, 
-      default: true 
+    isAlwaysAvailable: {
+      type: Boolean,
+      default: true,
     },
     workingHours: {
       type: Map,
@@ -208,9 +212,9 @@ const providerProfileSchema = new Schema<
     },
 
     // Payments & Deposits
-    requireInitialDeposit: { 
-      type: Boolean, 
-      default: false 
+    requireInitialDeposit: {
+      type: Boolean,
+      default: false,
     },
     percentageDeposit: {
       type: Number,
@@ -219,18 +223,18 @@ const providerProfileSchema = new Schema<
     },
 
     // Soft Delete Fields
-    isDeleted: { 
-      type: Boolean, 
+    isDeleted: {
+      type: Boolean,
       default: false,
       index: true,
     },
-    deletedAt: { 
+    deletedAt: {
       type: Date,
       default: null,
     },
-    deletedBy: { 
-      type: Schema.Types.ObjectId, 
-      ref: "User" 
+    deletedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
     },
   },
   {
@@ -268,7 +272,9 @@ providerProfileSchema.pre("save", async function () {
 
   // Ensure percentage deposit is set if required
   if (this.requireInitialDeposit && this.percentageDeposit === undefined) {
-    throw new Error("Percentage deposit must be specified when requiring deposit");
+    throw new Error(
+      "Percentage deposit must be specified when requiring deposit"
+    );
   }
 
   // Ensure percentage deposit is not set if not required
@@ -319,9 +325,9 @@ providerProfileSchema.statics.findByLocation = function (
 };
 
 providerProfileSchema.statics.findByProfile = function (profileId: string) {
-  return this.findOne({ 
-    profile: profileId, 
-    isDeleted: { $ne: true } 
+  return this.findOne({
+    profile: profileId,
+    isDeleted: { $ne: true },
   });
 };
 

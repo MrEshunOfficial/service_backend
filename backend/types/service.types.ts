@@ -72,4 +72,3 @@ export type ServiceDocument = HydratedDocument<
   Service,
   ServiceMethods & ServiceVirtuals
 >;
-

@@ -7,6 +7,10 @@ import { MongoDBFileService } from "../../services/files/mongodb.files.service";
 import { CategoryCoverHandler } from "./handlers/claudinary.handlers/catCover-cld.handler";
 import { ProfilePictureHandler } from "./handlers/claudinary.handlers/profPic-cld.handler";
 import { ServiceCoverHandler } from "./handlers/claudinary.handlers/serviceCover.cld";
+import {
+  ProviderIdImagesUploadHandler,
+  ProviderGalleryImagesUploadHandler,
+} from "./handlers/claudinary.handlers/provider-files.handlers";
 
 // Configure multer for memory storage
 const upload = multer({
@@ -22,6 +26,8 @@ export class CloudinaryFileController {
   private profilePictureHandler: ProfilePictureHandler;
   private categoryCoverHandler: CategoryCoverHandler;
   private serviceCoverHandler: ServiceCoverHandler;
+  private providerIdImagesUploadHandler: ProviderIdImagesUploadHandler;
+  private providerGalleryImagesUploadHandler: ProviderGalleryImagesUploadHandler;
   public uploadMiddleware: multer.Multer;
 
   // Profile Picture Endpoints
@@ -42,7 +48,19 @@ export class CloudinaryFileController {
   public getServiceCover;
   public deleteServiceCover;
   public getOptimizedServiceCover;
-    constructor(cloudinaryConfig: any) {
+
+  // Provider ID Images Endpoints
+  public uploadProviderIdImageSingle;
+  public uploadProviderIdImagesMultiple;
+  public deleteProviderIdImage;
+
+  // Provider Gallery Images Endpoints
+  public uploadProviderGalleryImageSingle;
+  public uploadProviderGalleryImagesMultiple;
+  public deleteProviderGalleryImage;
+  public getOptimizedProviderGalleryImage;
+
+  constructor(cloudinaryConfig: any) {
     this.cloudinaryService = new CloudinaryFileService(cloudinaryConfig);
     this.mongoService = new MongoDBFileService();
     this.uploadMiddleware = upload;
@@ -60,7 +78,19 @@ export class CloudinaryFileController {
       this.cloudinaryService,
       this.mongoService
     );
-    // Bind profile picture handlers
+    this.providerIdImagesUploadHandler = new ProviderIdImagesUploadHandler(
+      this.cloudinaryService,
+      this.mongoService
+    );
+    this.providerGalleryImagesUploadHandler =
+      new ProviderGalleryImagesUploadHandler(
+        this.cloudinaryService,
+        this.mongoService
+      );
+
+    // ============================================
+    // Bind Profile Picture Handlers
+    // ============================================
     this.uploadProfilePicture = this.profilePictureHandler.upload.bind(
       this.profilePictureHandler
     );
@@ -76,7 +106,9 @@ export class CloudinaryFileController {
     this.getOptimizedProfilePicture =
       this.profilePictureHandler.getOptimized.bind(this.profilePictureHandler);
 
-    // Bind category cover handlers
+    // ============================================
+    // Bind Category Cover Handlers
+    // ============================================
     this.uploadCategoryCover = this.categoryCoverHandler.upload.bind(
       this.categoryCoverHandler
     );
@@ -89,7 +121,9 @@ export class CloudinaryFileController {
     this.getOptimizedCategoryCover =
       this.categoryCoverHandler.getOptimized.bind(this.categoryCoverHandler);
 
-    // Bind service cover handlers
+    // ============================================
+    // Bind Service Cover Handlers
+    // ============================================
     this.uploadServiceCover = this.serviceCoverHandler.upload.bind(
       this.serviceCoverHandler
     );
@@ -102,5 +136,40 @@ export class CloudinaryFileController {
     this.getOptimizedServiceCover = this.serviceCoverHandler.getOptimized.bind(
       this.serviceCoverHandler
     );
+
+    // ============================================
+    // Bind Provider ID Images Upload Handlers
+    // ============================================
+    this.uploadProviderIdImageSingle =
+      this.providerIdImagesUploadHandler.uploadSingle.bind(
+        this.providerIdImagesUploadHandler
+      );
+    this.uploadProviderIdImagesMultiple =
+      this.providerIdImagesUploadHandler.uploadMultiple.bind(
+        this.providerIdImagesUploadHandler
+      );
+    this.deleteProviderIdImage = this.providerIdImagesUploadHandler.delete.bind(
+      this.providerIdImagesUploadHandler
+    );
+
+    // ============================================
+    // Bind Provider Gallery Images Upload Handlers
+    // ============================================
+    this.uploadProviderGalleryImageSingle =
+      this.providerGalleryImagesUploadHandler.uploadSingle.bind(
+        this.providerGalleryImagesUploadHandler
+      );
+    this.uploadProviderGalleryImagesMultiple =
+      this.providerGalleryImagesUploadHandler.uploadMultiple.bind(
+        this.providerGalleryImagesUploadHandler
+      );
+    this.deleteProviderGalleryImage =
+      this.providerGalleryImagesUploadHandler.delete.bind(
+        this.providerGalleryImagesUploadHandler
+      );
+    this.getOptimizedProviderGalleryImage =
+      this.providerGalleryImagesUploadHandler.getOptimized.bind(
+        this.providerGalleryImagesUploadHandler
+      );
   }
 }

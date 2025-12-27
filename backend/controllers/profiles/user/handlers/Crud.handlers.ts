@@ -1,12 +1,12 @@
 // controllers/profiles/handlers/crud.handler.ts
 import { Response, NextFunction } from "express";
 import { BaseProfileHandler } from "./base.handler";
-import { CreateProfileRequestBody } from "../../../types/profiles/user.profile.types";
+import { CreateProfileRequestBody } from "../../../../types/profiles/user.profile.types";
 import {
   handleError,
   validateObjectId,
   AuthenticatedRequest,
-} from "../../../utils/controller-utils/controller.utils";
+} from "../../../../utils/controller-utils/controller.utils";
 
 /**
  * Handler for CRUD operations on user profiles
