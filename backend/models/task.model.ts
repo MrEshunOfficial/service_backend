@@ -1,54 +1,182 @@
 // models/task.model.ts
-import { Schema, model, HydratedDocument } from "mongoose";
+
+import { Schema, HydratedDocument, model } from "mongoose";
 import {
   TaskPriority,
   Task,
+  TaskModel,
   TaskMethods,
   TaskStatus,
-  ITaskModel,
+  ProviderMatchResult,
 } from "../types/tasks.types";
-
-/**
- * Task Location Sub-Schema
- */
-const taskLocationSchema = new Schema(
-  {
-    clientLocality: {
-      type: String,
-      required: true,
-      trim: true,
-      index: true,
-    },
-    clientGPSAddress: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    providerLocality: {
-      type: String,
-      required: true,
-      trim: true,
-      index: true,
-    },
-  },
-  { _id: false }
-);
+import { ProviderModel, userLocationSchema } from "./profiles/provider.model";
+import { ServiceModel } from "./service.model";
+import { UserRole } from "../types/base.types";
 
 /**
  * Task Schedule Sub-Schema
  */
 const taskScheduleSchema = new Schema(
   {
-    urgency: {
+    priority: {
       type: String,
       enum: Object.values(TaskPriority),
       required: true,
       default: TaskPriority.MEDIUM,
     },
     preferredDate: { type: Date },
+    flexibleDates: {
+      type: Boolean,
+      default: false,
+    },
     timeSlot: {
-      startTime: { type: String, trim: true },
-      endTime: { type: String, trim: true },
+      start: { type: String, trim: true },
+      end: { type: String, trim: true },
+    },
+  },
+  { _id: false }
+);
+
+/**
+ * Estimated Budget Sub-Schema
+ */
+const estimatedBudgetSchema = new Schema(
+  {
+    min: { type: Number, min: 0 },
+    max: { type: Number, min: 0 },
+    currency: {
+      type: String,
+    },
+  },
+  { _id: false }
+);
+
+/**
+ * Matched Provider Sub-Schema
+ */
+const matchedProviderSchema = new Schema(
+  {
+    providerId: {
+      type: Schema.Types.ObjectId,
+      ref: "ProviderProfile",
+      required: true,
+    },
+    matchScore: {
+      type: Number,
+      min: 0,
+      max: 100,
+      required: true,
+    },
+    matchedServices: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Service",
+      },
+    ],
+    matchReasons: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+    distance: {
+      type: Number,
+      min: 0,
+    },
+  },
+  { _id: false }
+);
+
+/**
+ * Interested Provider Sub-Schema (for floating tasks)
+ */
+const interestedProviderSchema = new Schema(
+  {
+    providerId: {
+      type: Schema.Types.ObjectId,
+      ref: "ProviderProfile",
+      required: true,
+    },
+    expressedAt: {
+      type: Date,
+      default: Date.now,
+      required: true,
+    },
+    message: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
+  },
+  { _id: false }
+);
+
+/**
+ * Requested Provider Sub-Schema
+ */
+const requestedProviderSchema = new Schema(
+  {
+    providerId: {
+      type: Schema.Types.ObjectId,
+      ref: "ProviderProfile",
+      required: true,
+    },
+    requestedAt: {
+      type: Date,
+      default: Date.now,
+      required: true,
+    },
+    clientMessage: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
+  },
+  { _id: false }
+);
+
+/**
+ * Assigned Provider Sub-Schema
+ */
+const assignedProviderSchema = new Schema(
+  {
+    providerId: {
+      type: Schema.Types.ObjectId,
+      ref: "ProviderProfile",
+      required: true,
+    },
+    acceptedAt: {
+      type: Date,
+      default: Date.now,
+      required: true,
+    },
+    providerMessage: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
+  },
+  { _id: false }
+);
+
+/**
+ * Matching Criteria Sub-Schema
+ */
+const matchingCriteriaSchema = new Schema(
+  {
+    useLocationOnly: {
+      type: Boolean,
+      default: false,
+    },
+    searchTerms: [
+      {
+        type: String,
+        trim: true,
+      },
+    ],
+    categoryMatch: {
+      type: Boolean,
+      default: false,
     },
   },
   { _id: false }
@@ -57,7 +185,7 @@ const taskScheduleSchema = new Schema(
 /**
  * Main Task Schema
  */
-const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
+const taskSchema = new Schema<Task, TaskModel, TaskMethods>(
   {
     // Basic Information
     title: {
@@ -67,6 +195,25 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       maxlength: 200,
       index: "text",
     },
+    description: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 2000,
+      index: "text",
+    },
+    category: {
+      type: Schema.Types.ObjectId,
+      ref: "Category",
+      index: true,
+    },
+    tags: [
+      {
+        type: String,
+        trim: true,
+        lowercase: true,
+      },
+    ],
 
     // Customer Information
     customerId: {
@@ -75,10 +222,8 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       required: true,
       index: true,
     },
-
-    // Location
-    location: {
-      type: taskLocationSchema,
+    customerLocation: {
+      type: userLocationSchema,
       required: true,
     },
 
@@ -88,11 +233,16 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       required: true,
     },
 
-    // Status & Visibility
+    // Budget
+    estimatedBudget: {
+      type: estimatedBudgetSchema,
+    },
+
+    // Status & Flow
     status: {
       type: String,
       enum: Object.values(TaskStatus),
-      default: TaskStatus.DRAFT,
+      default: TaskStatus.PENDING,
       index: true,
     },
     expiresAt: {
@@ -100,46 +250,25 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       index: true,
     },
 
-    // Matching Results (Auto-matched on creation)
-    matchedProviders: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "ProviderProfile",
-      },
-    ],
-    hasMatches: {
-      type: Boolean,
-      default: false,
-      index: true,
-    },
+    // Matching Phase
+    matchedProviders: [matchedProviderSchema],
 
-    // Provider Interest (For floating tasks)
-    interestedProviders: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "ProviderProfile",
-      },
-    ],
-
-    // Assignment
-    requestedProviderId: {
-      type: Schema.Types.ObjectId,
-      ref: "ProviderProfile",
-      index: true,
-    },
-    requestedAt: {
+    // Matching metadata
+    matchingAttemptedAt: {
       type: Date,
     },
-    assignedProviderId: {
-      type: Schema.Types.ObjectId,
-      ref: "ProviderProfile",
-      index: true,
-    },
-    assignedAt: {
-      type: Date,
-    },
+    matchingCriteria: matchingCriteriaSchema,
 
-    // Task Completion
+    // Floating Phase
+    interestedProviders: [interestedProviderSchema],
+
+    // Request Phase
+    requestedProvider: requestedProviderSchema,
+
+    // Acceptance Phase
+    assignedProvider: assignedProviderSchema,
+
+    // Completion
     completedAt: {
       type: Date,
     },
@@ -150,6 +279,10 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
       type: String,
       trim: true,
       maxlength: 1000,
+    },
+    cancelledBy: {
+      type: String,
+      enum: [UserRole.CUSTOMER, UserRole.PROVIDER],
     },
 
     // Metadata
@@ -191,17 +324,18 @@ const taskSchema = new Schema<Task, ITaskModel, TaskMethods>(
 /**
  * Indexes for performance
  */
-taskSchema.index({ title: "text" });
+taskSchema.index({ title: "text", description: "text" });
+taskSchema.index({ tags: 1 });
 taskSchema.index({ customerId: 1, status: 1, isDeleted: 1 });
-taskSchema.index({ status: 1, hasMatches: 1, expiresAt: 1, isDeleted: 1 });
-taskSchema.index({
-  "location.clientLocality": 1,
-  "location.providerLocality": 1,
-});
-taskSchema.index({ matchedProviders: 1, status: 1 });
-taskSchema.index({ requestedProviderId: 1, status: 1 });
-taskSchema.index({ assignedProviderId: 1, status: 1 });
+taskSchema.index({ status: 1, expiresAt: 1, isDeleted: 1 });
+taskSchema.index({ "customerLocation.locality": 1 });
+taskSchema.index({ "customerLocation.region": 1 });
+taskSchema.index({ "matchedProviders.providerId": 1, status: 1 });
+taskSchema.index({ "interestedProviders.providerId": 1, status: 1 });
+taskSchema.index({ "requestedProvider.providerId": 1 });
+taskSchema.index({ "assignedProvider.providerId": 1 });
 taskSchema.index({ createdAt: -1, status: 1 });
+taskSchema.index({ category: 1, status: 1 });
 
 /**
  * Pre-save middleware
@@ -210,7 +344,8 @@ taskSchema.pre("save", async function () {
   // Auto-set expiration if not set (default: 30 days)
   if (
     !this.expiresAt &&
-    (this.status === TaskStatus.OPEN || this.status === TaskStatus.FLOATING)
+    this.status !== TaskStatus.COMPLETED &&
+    this.status !== TaskStatus.CANCELLED
   ) {
     const expiryDate = new Date();
     expiryDate.setDate(expiryDate.getDate() + 30);
@@ -219,36 +354,34 @@ taskSchema.pre("save", async function () {
 
   // Validate time slot if provided
   if (this.schedule.timeSlot) {
-    const { startTime, endTime } = this.schedule.timeSlot;
-    if (startTime && endTime && startTime >= endTime) {
+    const { start, end } = this.schedule.timeSlot;
+    if (start && end && start >= end) {
       throw new Error("Start time must be before end time");
     }
   }
 
-  // Auto-match providers when task moves from DRAFT to OPEN/FLOATING
+  // Validate budget
+  if (this.estimatedBudget) {
+    const { min, max } = this.estimatedBudget;
+    if (min && max && min > max) {
+      throw new Error("Minimum budget cannot be greater than maximum budget");
+    }
+  }
+
+  // Auto-match when task moves from PENDING to another status
   if (
     this.isModified("status") &&
-    this.status !== TaskStatus.DRAFT &&
-    !this.hasMatches
+    this.status === TaskStatus.PENDING &&
+    !this.matchingAttemptedAt
   ) {
-    try {
-      const matches = await this.findMatchingProviders();
-
-      if (matches && matches.length > 0) {
-        this.matchedProviders = matches.map((m) => m.provider as any);
-        this.hasMatches = true;
-        this.status = TaskStatus.OPEN;
-      } else {
-        this.matchedProviders = [];
-        this.hasMatches = false;
-        this.status = TaskStatus.FLOATING;
+    // Trigger matching in the next tick to avoid blocking save
+    process.nextTick(async () => {
+      try {
+        await this.findMatches("intelligent");
+      } catch (error) {
+        console.error("Error auto-matching providers:", error);
       }
-    } catch (error) {
-      console.error("Error auto-matching providers:", error);
-      // Default to floating if matching fails
-      this.status = TaskStatus.FLOATING;
-      this.hasMatches = false;
-    }
+    });
   }
 });
 
@@ -274,245 +407,294 @@ taskSchema.methods.restore = function (
   return this.save();
 };
 
-taskSchema.methods.requestProvider = function (
+/**
+ * Find Matches - Intelligent or Location-only matching
+ */
+taskSchema.methods.findMatches = async function (
   this: HydratedDocument<Task, TaskMethods>,
-  providerId: any
+  strategy: "intelligent" | "location-only" = "intelligent"
 ) {
-  // Client requests a provider (from matched list or interested providers)
-  this.requestedProviderId = providerId;
-  this.requestedAt = new Date();
-  this.status = TaskStatus.REQUESTED;
-  return this.save();
-};
+  this.matchingAttemptedAt = new Date();
 
-taskSchema.methods.acceptRequest = function (
-  this: HydratedDocument<Task, TaskMethods>,
-  providerId: any
-) {
-  // Provider accepts the client's request
-  if (this.requestedProviderId?.toString() !== providerId.toString()) {
-    throw new Error("Only the requested provider can accept this task");
-  }
+  // Initialize matching criteria
+  this.matchingCriteria = {
+    useLocationOnly: strategy === "location-only",
+    searchTerms: [],
+    categoryMatch: false,
+  };
 
-  this.assignedProviderId = providerId;
-  this.assignedAt = new Date();
-  this.status = TaskStatus.ASSIGNED;
-  return this.save();
-};
+  let matches: ProviderMatchResult[] = [];
 
-taskSchema.methods.markAsCompleted = function (
-  this: HydratedDocument<Task, TaskMethods>
-) {
-  this.status = TaskStatus.COMPLETED;
-  this.completedAt = new Date();
-  return this.save();
-};
+  if (strategy === "intelligent") {
+    // Extract search terms from title and description
+    const searchText = `${this.title} ${this.description}`.toLowerCase();
+    const keywords = searchText
+      .split(/\s+/)
+      .filter((word) => word.length > 2)
+      .filter((word) => !["the", "and", "for", "with", "need"].includes(word));
 
-taskSchema.methods.cancel = function (
-  this: HydratedDocument<Task, TaskMethods>,
-  reason?: string
-) {
-  this.status = TaskStatus.CANCELLED;
-  this.cancelledAt = new Date();
-  if (reason) this.cancellationReason = reason;
-  return this.save();
-};
+    this.matchingCriteria.searchTerms = keywords;
 
-taskSchema.methods.addInterestedProvider = function (
-  this: HydratedDocument<Task, TaskMethods>,
-  providerId: any
-) {
-  // Only for floating tasks
-  if (this.status !== TaskStatus.FLOATING) {
-    throw new Error("Only floating tasks can receive provider interest");
-  }
+    if (keywords.length > 0) {
+      // Find services matching keywords, tags, or category
+      const serviceQuery: any = {
+        isActive: true,
+        isDeleted: { $ne: true },
+        $or: [
+          { $text: { $search: keywords.join(" ") } },
+          { tags: { $in: this.tags || [] } },
+        ],
+      };
 
-  if (!this.interestedProviders) {
-    this.interestedProviders = [];
-  }
-  if (!this.interestedProviders.includes(providerId)) {
-    this.interestedProviders.push(providerId);
-  }
-  return this.save();
-};
+      if (this.category) {
+        serviceQuery.$or.push({ categoryId: this.category });
+        this.matchingCriteria.categoryMatch = true;
+      }
 
-taskSchema.methods.removeInterestedProvider = function (
-  this: HydratedDocument<Task, TaskMethods>,
-  providerId: any
-) {
-  if (this.interestedProviders) {
-    this.interestedProviders = this.interestedProviders.filter(
-      (id) => id.toString() !== providerId.toString()
-    );
-  }
-  return this.save();
-};
+      const matchingServices = await ServiceModel.find(serviceQuery)
+        .populate("providerId")
+        .lean();
 
-taskSchema.methods.findMatchingProviders = async function (
-  this: HydratedDocument<Task, TaskMethods>
-) {
-  // Import models dynamically to avoid circular dependencies
-  const { ProviderModel } = await import("./profiles/provider.model");
-  const { ServiceModel } = await import("./service.model");
+      // Group services by provider
+      const servicesByProvider = new Map<string, any[]>();
 
-  // Extract keywords from task title
-  const keywords = this.title
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((word) => word.length > 2); // Filter out short words
-
-  if (keywords.length === 0) {
-    return []; // No keywords to match
-  }
-
-  // Find services that match the keywords
-  const matchingServices = await ServiceModel.find({
-    $text: { $search: keywords.join(" ") },
-    isActive: true,
-    deletedAt: null,
-  }).populate("providerId");
-
-  // Filter services and get unique provider IDs
-  const providerIdsSet = new Set<string>();
-  const servicesByProvider = new Map<string, any[]>();
-
-  for (const service of matchingServices) {
-    // providerId is an array in Service model
-    if (service.providerId && Array.isArray(service.providerId)) {
-      for (const providerRef of service.providerId) {
-        const provider = providerRef as any;
-        if (provider && provider._id) {
-          const providerId = provider._id.toString();
-          providerIdsSet.add(providerId);
-
+      for (const service of matchingServices) {
+        if (service.providerId) {
+          const providerId = service.providerId.toString();
           if (!servicesByProvider.has(providerId)) {
             servicesByProvider.set(providerId, []);
           }
           servicesByProvider.get(providerId)!.push(service);
         }
       }
+
+      if (servicesByProvider.size > 0) {
+        // Get providers in customer's location
+        const providers = await ProviderModel.find({
+          _id: { $in: Array.from(servicesByProvider.keys()) },
+          $or: [
+            { "locationData.locality": this.customerLocation.locality },
+            { "locationData.city": this.customerLocation.city },
+            { "locationData.region": this.customerLocation.region },
+          ],
+          isDeleted: { $ne: true },
+        }).lean();
+
+        // Calculate match scores
+        matches = providers.map((provider: any) => {
+          const relevantServices =
+            servicesByProvider.get(provider._id.toString()) || [];
+          return this.calculateIntelligentMatchScore(
+            provider,
+            relevantServices
+          );
+        });
+
+        // Sort by match score
+        matches.sort((a, b) => b.matchScore - a.matchScore);
+
+        // Filter out low scores
+        matches = matches.filter((m) => m.matchScore >= 40);
+      }
+    }
+
+    // Fallback to location-only if too few matches
+    if (matches.length < 3) {
+      strategy = "location-only";
+      this.matchingCriteria.useLocationOnly = true;
     }
   }
 
-  if (providerIdsSet.size === 0) {
-    return []; // No providers found
+  // Location-only matching
+  if (strategy === "location-only") {
+    const providers = await ProviderModel.find({
+      $or: [
+        { "locationData.locality": this.customerLocation.locality },
+        { "locationData.city": this.customerLocation.city },
+        { "locationData.region": this.customerLocation.region },
+      ],
+      isDeleted: { $ne: true },
+    }).lean();
+
+    matches = providers.map((provider: any) =>
+      this.calculateLocationMatchScore(provider)
+    );
+
+    // Sort by match score
+    matches.sort((a, b) => b.matchScore - a.matchScore);
   }
 
-  // Fetch full provider profiles matching the locality
-  const providers = await ProviderModel.find({
-    _id: { $in: Array.from(providerIdsSet) },
-    "locationData.locality": this.location.providerLocality,
-    isDeleted: { $ne: true },
-  }).populate("profile");
+  // Update task with matches
+  if (matches.length > 0) {
+    this.matchedProviders = matches.slice(0, 20).map((m) => ({
+      providerId: m.providerId,
+      matchScore: m.matchScore,
+      matchedServices: m.matchedServices,
+      matchReasons: m.matchReasons,
+      distance: m.distance,
+    }));
+    this.status = TaskStatus.MATCHED;
+  } else {
+    this.matchedProviders = [];
+    this.status = TaskStatus.FLOATING;
+  }
 
-  // Calculate match scores
-  const matches = providers.map((provider) => {
-    const relevantServices =
-      servicesByProvider.get(provider._id.toString()) || [];
-
-    return {
-      provider: provider._id,
-      matchScore: this.calculateMatchScore(provider, relevantServices),
-      matchReasons: this.getMatchReasons(provider, relevantServices),
-      availability: provider.isAlwaysAvailable || false,
-      relevantServices,
-      providerRating: (provider as any).averageRating || 0,
-      completedTasksCount: (provider as any).completedTasks || 0,
-      responseTime: (provider as any).averageResponseTime,
-    };
-  });
-
-  // Sort by match score (highest first)
-  return matches.sort((a, b) => b.matchScore - a.matchScore);
+  await this.save();
+  return this;
 };
 
-// Helper method to calculate match score
-taskSchema.methods.calculateMatchScore = function (
+/**
+ * Calculate intelligent match score
+ */
+taskSchema.methods.calculateIntelligentMatchScore = function (
   provider: any,
-  relevantServices: any[] = []
-) {
-  let score = 0;
+  relevantServices: any[]
+): ProviderMatchResult {
+  const scores = {
+    titleScore: 0,
+    descriptionScore: 0,
+    tagScore: 0,
+    categoryScore: 0,
+    locationScore: 0,
+  };
 
-  // Provider locality match (40 points) - CRITICAL
-  // Must match locationData.locality since that's what ProviderProfile uses
-  if (provider.locationData?.locality === this.location.providerLocality) {
-    score += 40;
-  }
-
-  // Service relevance (30 points)
+  // Service relevance (40 points)
   if (relevantServices.length > 0) {
-    score += 30;
+    scores.titleScore = 20;
+    scores.descriptionScore = 20;
   }
 
-  // Rating bonus (15 points max)
-  const profile = provider.profile || provider;
-  if (profile.averageRating) {
-    score += (profile.averageRating / 5) * 15;
+  // Tag matching (20 points)
+  if (this.tags && this.tags.length > 0) {
+    const serviceTags = relevantServices.flatMap((s) => s.tags || []);
+    const matchingTags = this.tags.filter((tag: string) =>
+      serviceTags.some((st: string) => st.toLowerCase() === tag.toLowerCase())
+    );
+    scores.tagScore = (matchingTags.length / this.tags.length) * 20;
   }
 
-  // Experience bonus (10 points max)
-  if (profile.completedTasks) {
-    const experienceScore = Math.min(profile.completedTasks / 10, 1) * 10;
-    score += experienceScore;
+  // Category match (15 points)
+  if (
+    this.category &&
+    relevantServices.some(
+      (s) => s.categoryId?.toString() === this.category?.toString()
+    )
+  ) {
+    scores.categoryScore = 15;
   }
 
-  // Availability match (5 points)
-  if (provider.isAlwaysAvailable) {
-    score += 5;
-  } else if (provider.workingHours && this.schedule.timeSlot) {
-    // Check if provider's working hours overlap with task time slot
-    // Simple check for now - can be enhanced
-    score += 3;
+  // Location proximity (25 points)
+  if (provider.locationData?.locality === this.customerLocation.locality) {
+    scores.locationScore = 25;
+  } else if (provider.locationData?.city === this.customerLocation.city) {
+    scores.locationScore = 15;
+  } else if (provider.locationData?.region === this.customerLocation.region) {
+    scores.locationScore = 10;
   }
 
-  return Math.min(Math.round(score), 100);
+  const matchScore = Math.round(
+    scores.titleScore +
+      scores.descriptionScore +
+      scores.tagScore +
+      scores.categoryScore +
+      scores.locationScore
+  );
+
+  const matchReasons = this.buildMatchReasons(
+    provider,
+    relevantServices,
+    scores
+  );
+
+  return {
+    providerId: provider._id,
+    matchScore: Math.min(matchScore, 100),
+    matchedServices: relevantServices.map((s) => s._id),
+    matchReasons,
+    distance: undefined,
+    scoreBreakdown: scores,
+  };
 };
 
-// Helper method to get match reasons
-taskSchema.methods.getMatchReasons = function (provider: any, services: any[]) {
+/**
+ * Calculate location-only match score
+ */
+taskSchema.methods.calculateLocationMatchScore = function (
+  provider: any
+): ProviderMatchResult {
+  const scores = {
+    titleScore: 0,
+    descriptionScore: 0,
+    tagScore: 0,
+    categoryScore: 0,
+    locationScore: 0,
+  };
+
+  // Location match (100 points distributed)
+  if (provider.locationData?.locality === this.customerLocation.locality) {
+    scores.locationScore = 100;
+  } else if (provider.locationData?.city === this.customerLocation.city) {
+    scores.locationScore = 70;
+  } else if (provider.locationData?.region === this.customerLocation.region) {
+    scores.locationScore = 50;
+  }
+
+  const matchReasons = ["Available in your area"];
+
+  if (provider.isCompanyTrained) {
+    matchReasons.push("Company trained");
+  }
+
+  if (provider.isAlwaysAvailable) {
+    matchReasons.push("Available anytime");
+  }
+
+  return {
+    providerId: provider._id,
+    matchScore: Math.round(scores.locationScore),
+    matchedServices: [],
+    matchReasons,
+    distance: undefined,
+    scoreBreakdown: scores,
+  };
+};
+
+/**
+ * Build match reasons
+ */
+taskSchema.methods.buildMatchReasons = function (
+  provider: any,
+  services: any[],
+  scores: any
+): string[] {
   const reasons: string[] = [];
 
-  // Check locality match
-  if (provider.locationData?.locality === this.location.providerLocality) {
-    reasons.push(`Located in ${this.location.providerLocality}`);
-  }
-
-  // Service offerings
   if (services.length > 0) {
     reasons.push(`Offers ${services.length} relevant service(s)`);
   }
 
-  // Rating - check both provider and profile
-  const profile = provider.profile || provider;
-  const rating = profile.averageRating || provider.averageRating;
-
-  if (rating >= 4.5) {
-    reasons.push("Highly rated provider");
-  } else if (rating >= 4.0) {
-    reasons.push("Well-rated provider");
+  if (scores.tagScore > 10) {
+    reasons.push("Service tags match your needs");
   }
 
-  // Experience
-  const completedTasks = profile.completedTasks || provider.completedTasks;
-  if (completedTasks >= 50) {
-    reasons.push("Very experienced provider");
-  } else if (completedTasks >= 10) {
-    reasons.push("Experienced provider");
+  if (scores.categoryScore > 0) {
+    reasons.push("Service category matches");
   }
 
-  // Availability
-  if (provider.isAlwaysAvailable) {
-    reasons.push("Available anytime");
-  } else if (provider.workingHours) {
-    reasons.push("Has set working hours");
+  if (provider.locationData?.locality === this.customerLocation.locality) {
+    reasons.push(`Located in ${this.customerLocation.locality}`);
+  } else if (provider.locationData?.city === this.customerLocation.city) {
+    reasons.push(`Located in ${this.customerLocation.city}`);
   }
 
-  // Company trained
   if (provider.isCompanyTrained) {
     reasons.push("Company trained");
   }
 
-  // Verified address
+  if (provider.isAlwaysAvailable) {
+    reasons.push("Available anytime");
+  }
+
   if (provider.locationData?.isAddressVerified) {
     reasons.push("Verified address");
   }
@@ -521,15 +703,210 @@ taskSchema.methods.getMatchReasons = function (provider: any, services: any[]) {
 };
 
 /**
- * Static Methods - ALL UPDATED WITH PROPER POPULATION
+ * Make Floating
+ */
+taskSchema.methods.makeFloating = function (
+  this: HydratedDocument<Task, TaskMethods>
+) {
+  this.status = TaskStatus.FLOATING;
+  this.matchedProviders = [];
+  return this.save();
+};
+
+/**
+ * Add Provider Interest (for floating tasks)
+ */
+taskSchema.methods.addProviderInterest = function (
+  this: HydratedDocument<Task, TaskMethods>,
+  providerId: any,
+  message?: string
+) {
+  if (this.status !== TaskStatus.FLOATING) {
+    throw new Error("Only floating tasks can receive provider interest");
+  }
+
+  if (!this.interestedProviders) {
+    this.interestedProviders = [];
+  }
+
+  const alreadyInterested = this.interestedProviders.some(
+    (ip) => ip.providerId.toString() === providerId.toString()
+  );
+
+  if (!alreadyInterested) {
+    this.interestedProviders.push({
+      providerId,
+      expressedAt: new Date(),
+      message,
+    });
+  }
+
+  return this.save();
+};
+
+/**
+ * Remove Provider Interest
+ */
+taskSchema.methods.removeProviderInterest = function (
+  this: HydratedDocument<Task, TaskMethods>,
+  providerId: any
+) {
+  if (this.interestedProviders) {
+    this.interestedProviders = this.interestedProviders.filter(
+      (ip) => ip.providerId.toString() !== providerId.toString()
+    );
+  }
+  return this.save();
+};
+
+/**
+ * Request Provider (Customer selects a provider)
+ */
+taskSchema.methods.requestProvider = function (
+  this: HydratedDocument<Task, TaskMethods>,
+  providerId: any,
+  message?: string
+) {
+  // Check if provider is in matched list or interested list
+  const isMatched = this.matchedProviders?.some(
+    (mp) => mp.providerId.toString() === providerId.toString()
+  );
+
+  const isInterested = this.interestedProviders?.some(
+    (ip) => ip.providerId.toString() === providerId.toString()
+  );
+
+  if (!isMatched && !isInterested) {
+    throw new Error("Provider must be in matched or interested list");
+  }
+
+  this.requestedProvider = {
+    providerId,
+    requestedAt: new Date(),
+    clientMessage: message,
+  };
+  this.status = TaskStatus.REQUESTED;
+
+  return this.save();
+};
+
+/**
+ * Accept Task (Provider accepts the request)
+ */
+taskSchema.methods.acceptTask = function (
+  this: HydratedDocument<Task, TaskMethods>,
+  providerId: any,
+  message?: string
+) {
+  if (this.requestedProvider?.providerId.toString() !== providerId.toString()) {
+    throw new Error("Only the requested provider can accept this task");
+  }
+
+  this.assignedProvider = {
+    providerId,
+    acceptedAt: new Date(),
+    providerMessage: message,
+  };
+  this.status = TaskStatus.ACCEPTED;
+
+  return this.save();
+};
+
+/**
+ * Reject Task (Provider rejects the request)
+ */
+taskSchema.methods.rejectTask = function (
+  this: HydratedDocument<Task, TaskMethods>,
+  providerId: any,
+  reason?: string
+) {
+  if (this.requestedProvider?.providerId.toString() !== providerId.toString()) {
+    throw new Error("Only the requested provider can reject this task");
+  }
+
+  // Move back to previous status
+  if (this.matchedProviders && this.matchedProviders.length > 0) {
+    this.status = TaskStatus.MATCHED;
+  } else if (this.interestedProviders && this.interestedProviders.length > 0) {
+    this.status = TaskStatus.FLOATING;
+  } else {
+    this.status = TaskStatus.PENDING;
+  }
+
+  this.requestedProvider = undefined;
+  this.cancellationReason = reason;
+
+  return this.save();
+};
+
+/**
+ * Start Task
+ */
+taskSchema.methods.startTask = function (
+  this: HydratedDocument<Task, TaskMethods>
+) {
+  if (this.status !== TaskStatus.ACCEPTED) {
+    throw new Error("Task must be accepted before starting");
+  }
+
+  this.status = TaskStatus.IN_PROGRESS;
+  return this.save();
+};
+
+/**
+ * Complete Task
+ */
+taskSchema.methods.completeTask = function (
+  this: HydratedDocument<Task, TaskMethods>
+) {
+  this.status = TaskStatus.COMPLETED;
+  this.completedAt = new Date();
+  return this.save();
+};
+
+/**
+ * Cancel Task
+ */
+taskSchema.methods.cancelTask = function (
+  this: HydratedDocument<Task, TaskMethods>,
+  reason?: string,
+  cancelledBy?: UserRole.CUSTOMER | UserRole.PROVIDER
+) {
+  this.status = TaskStatus.CANCELLED;
+  this.cancelledAt = new Date();
+  this.cancellationReason = reason;
+  this.cancelledBy = cancelledBy;
+  return this.save();
+};
+
+/**
+ * Static Methods
  */
 taskSchema.statics.findActive = function () {
-  return this.find({ isDeleted: { $ne: true } })
+  return this.find({
+    isDeleted: { $ne: true },
+    status: {
+      $nin: [TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.EXPIRED],
+    },
+  })
     .populate("customerId", "name email")
-    .populate("matchedProviders", "businessName locationData profile")
-    .populate("interestedProviders", "businessName locationData profile")
-    .populate("requestedProviderId", "businessName locationData profile")
-    .populate("assignedProviderId", "businessName locationData profile");
+    .populate(
+      "matchedProviders.providerId",
+      "businessName locationData profile"
+    )
+    .populate(
+      "interestedProviders.providerId",
+      "businessName locationData profile"
+    )
+    .populate(
+      "requestedProvider.providerId",
+      "businessName locationData profile"
+    )
+    .populate(
+      "assignedProvider.providerId",
+      "businessName locationData profile"
+    )
+    .sort({ createdAt: -1 });
 };
 
 taskSchema.statics.findByCustomer = function (customerId: string) {
@@ -537,66 +914,95 @@ taskSchema.statics.findByCustomer = function (customerId: string) {
     customerId,
     isDeleted: { $ne: true },
   })
-    .sort({ createdAt: -1 })
+    .populate(
+      "matchedProviders.providerId",
+      "businessName locationData profile"
+    )
+    .populate(
+      "interestedProviders.providerId",
+      "businessName locationData profile"
+    )
+    .populate(
+      "requestedProvider.providerId",
+      "businessName locationData profile"
+    )
+    .populate(
+      "assignedProvider.providerId",
+      "businessName locationData profile"
+    )
+    .sort({ createdAt: -1 });
+};
+
+taskSchema.statics.findByService = function (serviceId: string) {
+  return this.find({
+    "matchedProviders.matchedServices": serviceId,
+    isDeleted: { $ne: true },
+  })
     .populate("customerId", "name email")
-    .populate("matchedProviders", "businessName locationData profile")
-    .populate("interestedProviders", "businessName locationData profile")
-    .populate("requestedProviderId", "businessName locationData profile")
-    .populate("assignedProviderId", "businessName locationData profile");
+    .sort({ createdAt: -1 });
 };
 
 taskSchema.statics.findFloatingTasks = function () {
   return this.find({
     status: TaskStatus.FLOATING,
-    hasMatches: false,
     isDeleted: { $ne: true },
-    expiresAt: { $gt: new Date() },
+    $or: [{ expiresAt: { $gt: new Date() } }, { expiresAt: null }],
   })
-    .sort({ createdAt: -1 })
     .populate("customerId", "name email")
-    .populate("interestedProviders", "businessName locationData profile");
+    .populate(
+      "interestedProviders.providerId",
+      "businessName locationData profile"
+    )
+    .sort({ createdAt: -1 });
 };
 
-taskSchema.statics.findTasksWithMatches = function () {
+taskSchema.statics.findMatchedForProvider = function (providerId: string) {
   return this.find({
-    status: TaskStatus.OPEN,
-    hasMatches: true,
+    "matchedProviders.providerId": providerId,
+    status: TaskStatus.MATCHED,
     isDeleted: { $ne: true },
-    expiresAt: { $gt: new Date() },
+    $or: [{ expiresAt: { $gt: new Date() } }, { expiresAt: null }],
   })
-    .sort({ createdAt: -1 })
     .populate("customerId", "name email")
-    .populate("matchedProviders", "businessName locationData profile");
+    .sort({ createdAt: -1 });
 };
 
-taskSchema.statics.findByProviderInMatches = function (providerId: string) {
+taskSchema.statics.findByAssignedProvider = function (providerId: string) {
   return this.find({
-    matchedProviders: providerId,
-    status: TaskStatus.OPEN,
+    "assignedProvider.providerId": providerId,
+    status: { $in: [TaskStatus.ACCEPTED, TaskStatus.IN_PROGRESS] },
     isDeleted: { $ne: true },
-    expiresAt: { $gt: new Date() },
   })
-    .sort({ createdAt: -1 })
     .populate("customerId", "name email")
-    .populate("matchedProviders", "businessName locationData profile")
-    .populate("interestedProviders", "businessName locationData profile")
-    .populate("requestedProviderId", "businessName locationData profile")
-    .populate("assignedProviderId", "businessName locationData profile");
+    .sort({ createdAt: -1 });
 };
 
-taskSchema.statics.searchTasks = function (searchTerm: string) {
-  return this.find({
+taskSchema.statics.searchTasks = function (searchTerm: string, filters?: any) {
+  const query: any = {
     $text: { $search: searchTerm },
-    $or: [{ status: TaskStatus.OPEN }, { status: TaskStatus.FLOATING }],
     isDeleted: { $ne: true },
-    expiresAt: { $gt: new Date() },
-  })
-    .sort({ score: { $meta: "textScore" }, createdAt: -1 })
+  };
+
+  if (filters?.status) {
+    query.status = filters.status;
+  }
+
+  if (filters?.serviceId) {
+    query["matchedProviders.matchedServices"] = filters.serviceId;
+  }
+
+  if (filters?.location) {
+    query.$or = [
+      { "customerLocation.locality": filters.location },
+      { "customerLocation.city": filters.location },
+      { "customerLocation.region": filters.location },
+    ];
+  }
+
+  return this.find(query)
     .populate("customerId", "name email")
-    .populate("matchedProviders", "businessName locationData profile")
-    .populate("interestedProviders", "businessName locationData profile")
-    .populate("requestedProviderId", "businessName locationData profile")
-    .populate("assignedProviderId", "businessName locationData profile");
+    .populate("matchedProviders.providerId", "businessName locationData")
+    .sort({ score: { $meta: "textScore" }, createdAt: -1 });
 };
 
 /**
@@ -608,25 +1014,24 @@ taskSchema.virtual("isExpired").get(function () {
 
 taskSchema.virtual("isActive").get(function () {
   return (
-    (this.status === TaskStatus.OPEN || this.status === TaskStatus.FLOATING) &&
+    ![TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.EXPIRED].includes(
+      this.status
+    ) &&
     !this.isDeleted &&
     (!this.expiresAt || this.expiresAt > new Date())
   );
 });
 
+taskSchema.virtual("hasMatches").get(function () {
+  return this.matchedProviders && this.matchedProviders.length > 0;
+});
+
 taskSchema.virtual("isFloating").get(function () {
-  return this.status === TaskStatus.FLOATING && !this.hasMatches;
+  return this.status === TaskStatus.FLOATING;
 });
 
-taskSchema.virtual("hasAssignedProvider").get(function () {
-  return !!this.assignedProviderId;
-});
-
-taskSchema.virtual("daysUntilExpiry").get(function () {
-  if (!this.expiresAt) return -1;
-  const now = new Date();
-  const diff = this.expiresAt.getTime() - now.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+taskSchema.virtual("isAssigned").get(function () {
+  return !!this.assignedProvider;
 });
 
 taskSchema.virtual("matchCount").get(function () {
@@ -637,7 +1042,15 @@ taskSchema.virtual("interestCount").get(function () {
   return this.interestedProviders?.length || 0;
 });
 
+taskSchema.virtual("daysUntilExpiry").get(function () {
+  if (!this.expiresAt) return -1;
+  const now = new Date();
+  const diff = this.expiresAt.getTime() - now.getTime();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+});
+
 /**
  * Export the model
  */
-export const TaskModel = model<Task, ITaskModel>("Task", taskSchema);
+export const TaskModelInstance = model<Task, TaskModel>("Task", taskSchema);
+export default TaskModelInstance;

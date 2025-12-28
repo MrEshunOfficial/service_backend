@@ -1,0 +1,1122 @@
+// handlers/task.handlers.ts - Complete Updated Version
+
+import { Response } from "express";
+import { Types } from "mongoose";
+import { UserRole } from "../../../types/base.types";
+import {
+  CreateTaskRequestBody,
+  TaskStatus,
+  UpdateTaskRequestBody,
+} from "../../../types/tasks.types";
+import { AuthenticatedRequest } from "../../../types/user.types";
+import {
+  validateObjectId,
+  handleError,
+} from "../../../utils/controller-utils/controller.utils";
+import { taskService } from "../../../services/tasks/task.service";
+import { ProviderModel } from "../../../models/profiles/provider.model";
+
+/**
+ * Customer Task Handlers
+ */
+export class CustomerTaskHandlers {
+  /**
+   * Create a new task
+   * POST /api/tasks
+   */
+  static async createTask(req: AuthenticatedRequest, res: Response) {
+    try {
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      // Validate request body
+      const {
+        title,
+        description,
+        customerLocation,
+        schedule,
+        category,
+        tags,
+        estimatedBudget,
+        matchingStrategy,
+      } = req.body as CreateTaskRequestBody;
+
+      // Required field validation
+      if (!title || !description || !customerLocation || !schedule) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Missing required fields: title, description, customerLocation, schedule",
+        });
+      }
+
+      // Validate schedule
+      if (!schedule.priority) {
+        return res.status(400).json({
+          success: false,
+          message: "Schedule priority is required",
+        });
+      }
+
+      // Validate customer location
+      if (!customerLocation.ghanaPostGPS) {
+        return res.status(400).json({
+          success: false,
+          message: "Ghana Post GPS address is required",
+        });
+      }
+
+      // Validate category if provided
+      if (category && !validateObjectId(category)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid category ID",
+        });
+      }
+
+      // Create task
+      const result = await taskService.createTask(
+        new Types.ObjectId(customerId),
+        {
+          title,
+          description,
+          customerLocation,
+          schedule,
+          category,
+          tags,
+          estimatedBudget,
+          matchingStrategy: matchingStrategy || "intelligent",
+        }
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+          matchedProviders: result.matchedProviders,
+          matchingSummary: result.matchingSummary,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to create task");
+    }
+  }
+
+  /**
+   * Get all tasks for the authenticated customer
+   * GET /api/tasks/my-tasks
+   */
+  static async getMyTasks(req: AuthenticatedRequest, res: Response) {
+    try {
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      // Extract query parameters
+      const { status, includeDeleted } = req.query;
+
+      const result = await taskService.getCustomerTasks(customerId, {
+        status: status as TaskStatus | undefined,
+        includeDeleted: includeDeleted === "true",
+      });
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          tasks: result.tasks,
+          count: result.tasks?.length || 0,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve tasks");
+    }
+  }
+
+  /**
+   * Get a specific task by ID
+   * GET /api/tasks/:taskId
+   */
+  static async getTaskById(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      const result = await taskService.getTaskById(taskId);
+
+      if (result.error || !result.task) {
+        return res.status(404).json({
+          success: false,
+          message: result.message,
+        });
+      }
+
+      // Verify ownership
+      const taskCustomerId = result.task.customerId;
+      if (taskCustomerId && taskCustomerId.toString() !== customerId) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: You don't have access to this task",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve task");
+    }
+  }
+
+  /**
+   * Update a task
+   * PATCH /api/tasks/:taskId
+   */
+  static async updateTask(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      const updateData = req.body as UpdateTaskRequestBody;
+
+      // Validate if at least one field is provided
+      if (
+        !updateData.title &&
+        !updateData.description &&
+        !updateData.customerLocation &&
+        !updateData.schedule
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "No update fields provided",
+        });
+      }
+
+      const result = await taskService.updateTask(
+        taskId,
+        customerId,
+        updateData
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to update task");
+    }
+  }
+
+  /**
+   * Request a specific provider for a task
+   * POST /api/tasks/:taskId/request-provider
+   */
+  static async requestProvider(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      const { providerId, message } = req.body;
+
+      if (!providerId) {
+        return res.status(400).json({
+          success: false,
+          message: "Provider ID is required",
+        });
+      }
+
+      if (!validateObjectId(providerId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid provider ID",
+        });
+      }
+
+      const result = await taskService.requestProvider(
+        {
+          taskId,
+          providerId,
+          message,
+        },
+        customerId
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to request provider");
+    }
+  }
+
+  /**
+   * Cancel a task
+   * POST /api/tasks/:taskId/cancel
+   */
+  static async cancelTask(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const customerId = req.userId;
+      const { reason } = req.body;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      const result = await taskService.cancelTask(
+        taskId,
+        customerId,
+        UserRole.CUSTOMER,
+        reason
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to cancel task");
+    }
+  }
+
+  /**
+   * Delete a task (soft delete)
+   * DELETE /api/tasks/:taskId
+   */
+  static async deleteTask(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      const result = await taskService.deleteTask(taskId, customerId);
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to delete task");
+    }
+  }
+
+  /**
+   * Re-run matching for a task
+   * POST /api/tasks/:taskId/rematch
+   */
+  static async rematchTask(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const customerId = req.userId;
+      const { strategy } = req.body;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      if (strategy && !["intelligent", "location-only"].includes(strategy)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid strategy. Must be 'intelligent' or 'location-only'",
+        });
+      }
+
+      const result = await taskService.rematchTask(
+        taskId,
+        customerId,
+        strategy as "intelligent" | "location-only" | undefined
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+          matchedProviders: result.matchedProviders,
+          matchingSummary: result.matchingSummary,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to rematch task");
+    }
+  }
+}
+
+/**
+ * Provider Task Handlers - FIXED VERSION
+ */
+export class ProviderTaskHandlers {
+  /**
+   * Helper method to get provider profile
+   */
+  private static async getProviderProfile(userId: string) {
+    const provider = await ProviderModel.findOne({
+      userId,
+      isDeleted: { $ne: true },
+    });
+
+    if (!provider) {
+      throw new Error("Provider profile not found");
+    }
+
+    return provider;
+  }
+
+  /**
+   * Get matched tasks for the provider
+   * GET /api/tasks/provider/matched
+   */
+  static async getMatchedTasks(req: AuthenticatedRequest, res: Response) {
+    try {
+      const userId = req.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      // Get the provider profile
+      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+
+      // Use the provider's _id, not the user's _id
+      const result = await taskService.getMatchedTasksForProvider(
+        provider._id.toString()
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          tasks: result.tasks,
+          count: result.tasks?.length || 0,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve matched tasks");
+    }
+  }
+
+  /**
+   * Get floating tasks that provider can express interest in
+   * GET /api/tasks/provider/floating
+   */
+  static async getFloatingTasks(req: AuthenticatedRequest, res: Response) {
+    try {
+      const userId = req.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      // Get the provider profile from the database
+      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+
+      // Check if provider has location data
+      if (!provider.locationData || !provider.locationData.ghanaPostGPS) {
+        return res.status(400).json({
+          success: false,
+          message: "Provider location not set. Please update your profile.",
+        });
+      }
+
+      // Use the provider's _id and locationData
+      const result = await taskService.getFloatingTasksForProvider(
+        provider._id, // This is the actual provider profile ObjectId
+        provider.locationData
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          tasks: result.tasks,
+          count: result.tasks?.length || 0,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve floating tasks");
+    }
+  }
+
+  /**
+   * Get active tasks (tasks provider is working on)
+   * GET /api/tasks/provider/active
+   */
+  static async getActiveTasks(req: AuthenticatedRequest, res: Response) {
+    try {
+      const userId = req.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      // Get the provider profile
+      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+
+      // Use the provider's _id
+      const result = await taskService.getActiveTasksForProvider(
+        provider._id.toString()
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          tasks: result.tasks,
+          count: result.tasks?.length || 0,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve active tasks");
+    }
+  }
+
+  /**
+   * Express interest in a floating task
+   * POST /api/tasks/:taskId/express-interest
+   */
+  static async expressInterest(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const userId = req.userId;
+      const { message } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      // Get the provider profile
+      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+
+      // Use the provider's _id
+      const result = await taskService.expressInterest(
+        {
+          taskId,
+          message,
+        },
+        provider._id // Provider profile ObjectId, not user ObjectId
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to express interest");
+    }
+  }
+
+  /**
+   * Respond to a task request (accept or reject)
+   * POST /api/tasks/:taskId/respond
+   */
+  static async respondToRequest(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const userId = req.userId;
+      const { action, message } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      if (!action || !["accept", "reject"].includes(action)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid action. Must be 'accept' or 'reject'",
+        });
+      }
+
+      // Get the provider profile
+      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+
+      // Use the provider's _id
+      const result = await taskService.respondToRequest(
+        {
+          taskId,
+          action: action as "accept" | "reject",
+          message,
+        },
+        provider._id.toString() // Provider profile ID
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to respond to request");
+    }
+  }
+
+  /**
+   * Start working on an accepted task
+   * POST /api/tasks/:taskId/start
+   */
+  static async startTask(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const userId = req.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      // Get the provider profile
+      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+
+      // Use the provider's _id
+      const result = await taskService.startTask(
+        taskId,
+        provider._id.toString()
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to start task");
+    }
+  }
+
+  /**
+   * Complete a task
+   * POST /api/tasks/:taskId/complete
+   */
+  static async completeTask(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const userId = req.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      // Get the provider profile
+      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+
+      // Use the provider's _id
+      const result = await taskService.completeTask(
+        taskId,
+        provider._id.toString()
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to complete task");
+    }
+  }
+
+  /**
+   * Cancel a task (provider side)
+   * POST /api/tasks/:taskId/provider-cancel
+   */
+  static async cancelTask(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const userId = req.userId;
+      const { reason } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      // Get the provider profile
+      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+
+      // Use the provider's _id
+      const result = await taskService.cancelTask(
+        taskId,
+        provider._id.toString(),
+        UserRole.PROVIDER,
+        reason
+      );
+
+      if (result.error) {
+        return res.status(400).json({
+          success: false,
+          message: result.message,
+          error: result.error,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to cancel task");
+    }
+  }
+
+  /**
+   * Get a specific task details (provider view)
+   * GET /api/tasks/provider/:taskId
+   */
+  static async getTaskDetails(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const userId = req.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      // Get the provider profile
+      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+      const providerId = provider._id.toString();
+
+      const result = await taskService.getTaskById(taskId);
+
+      if (result.error || !result.task) {
+        return res.status(404).json({
+          success: false,
+          message: result.message,
+        });
+      }
+
+      // Check if provider has access to this task
+      const task = result.task;
+      const hasAccess =
+        task.matchedProviders?.some(
+          (mp: any) => mp.providerId?.toString() === providerId
+        ) ||
+        task.interestedProviders?.some(
+          (ip: any) => ip.providerId?.toString() === providerId
+        ) ||
+        (task.requestedProvider &&
+          task.requestedProvider.providerId?.toString() === providerId) ||
+        (task.assignedProvider &&
+          task.assignedProvider.providerId?.toString() === providerId) ||
+        task.status === TaskStatus.FLOATING;
+
+      if (!hasAccess) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: You don't have access to this task",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve task details");
+    }
+  }
+}
+
+/**
+ * Admin Task Handlers (Optional - for platform management)
+ */
+export class AdminTaskHandlers {
+  /**
+   * Get all tasks (admin only)
+   * GET /api/admin/tasks
+   */
+  static async getAllTasks(req: AuthenticatedRequest, res: Response) {
+    try {
+      // Check if user is admin (implement your admin check logic)
+      if (!req.user?.isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: Admin access required",
+        });
+      }
+
+      const { status, page = "1", limit = "20" } = req.query;
+
+      // Implement pagination and filtering logic here
+      // This is a basic example
+      const TaskModel = (await import("../../../models/task.model")).default;
+
+      const query: any = {};
+      if (status) {
+        query.status = status;
+      }
+
+      const pageNum = Number(page);
+      const limitNum = Number(limit);
+      const skip = (pageNum - 1) * limitNum;
+
+      const tasks = await TaskModel.find(query)
+        .populate("customerId", "name email")
+        .populate("matchedProviders.providerId", "businessName locationData")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum);
+
+      const total = await TaskModel.countDocuments(query);
+
+      return res.status(200).json({
+        success: true,
+        message: "Tasks retrieved successfully",
+        data: {
+          tasks,
+          pagination: {
+            total,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(total / limitNum),
+          },
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve tasks");
+    }
+  }
+
+  /**
+   * Get task statistics (admin only)
+   * GET /api/admin/tasks/statistics
+   */
+  static async getTaskStatistics(req: AuthenticatedRequest, res: Response) {
+    try {
+      // Check if user is admin
+      if (!req.user?.isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: Admin access required",
+        });
+      }
+
+      const TaskModel = (await import("../../../models/task.model")).default;
+
+      const statistics = await TaskModel.aggregate([
+        {
+          $group: {
+            _id: "$status",
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      const total = await TaskModel.countDocuments();
+      const activeCount = await TaskModel.countDocuments({
+        status: {
+          $nin: [
+            TaskStatus.COMPLETED,
+            TaskStatus.CANCELLED,
+            TaskStatus.EXPIRED,
+          ],
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Statistics retrieved successfully",
+        data: {
+          total,
+          active: activeCount,
+          byStatus: statistics,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve statistics");
+    }
+  }
+}

@@ -27,7 +27,7 @@ const coordinatesSchema = new Schema(
 /**
  * User Location Sub-Schema
  */
-const userLocationSchema = new Schema(
+export const userLocationSchema = new Schema(
   {
     ghanaPostGPS: {
       type: String,

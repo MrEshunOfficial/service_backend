@@ -56,6 +56,10 @@ export interface ContactDetails {
   businessContact?: string; // for providers or organizations
   businessEmail?: string; // official company email
 }
+export interface ClientContactDetails {
+  secondaryContact?: string;
+  emailAddress?: string;
+}
 
 export enum idType {
   NATIONAL_ID = "national_id",

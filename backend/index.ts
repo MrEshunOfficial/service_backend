@@ -16,6 +16,7 @@ import {
 import fileRoutes from "./routes/files.routes";
 import categoryRoutes from "./routes/category.routes";
 import providerProfileRoutes from "./routes/profiles/provider.profile.routes";
+import taskRoutes from "./routes/task.routes";
 
 // import taskRoutes from "./routes/task.routes";
 
@@ -65,6 +66,7 @@ async function startServer() {
     app.use("/api/categories", categoryRoutes);
     app.use("/api/services", serviceRoutes);
     app.use("/api/providers", providerProfileRoutes);
+    app.use("/api/tasks", taskRoutes);
 
     // Error handling middleware
     app.use(
