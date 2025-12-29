@@ -339,6 +339,7 @@ taskSchema.index({ category: 1, status: 1 });
 
 /**
  * Pre-save middleware
+ * ✅ FIXED: Removed auto-matching to prevent parallel saves
  */
 taskSchema.pre("save", async function () {
   // Auto-set expiration if not set (default: 30 days)
@@ -368,21 +369,7 @@ taskSchema.pre("save", async function () {
     }
   }
 
-  // Auto-match when task moves from PENDING to another status
-  if (
-    this.isModified("status") &&
-    this.status === TaskStatus.PENDING &&
-    !this.matchingAttemptedAt
-  ) {
-    // Trigger matching in the next tick to avoid blocking save
-    process.nextTick(async () => {
-      try {
-        await this.findMatches("intelligent");
-      } catch (error) {
-        console.error("Error auto-matching providers:", error);
-      }
-    });
-  }
+  // ✅ REMOVED: Auto-matching moved to service layer to prevent parallel saves
 });
 
 /**
@@ -409,6 +396,7 @@ taskSchema.methods.restore = function (
 
 /**
  * Find Matches - Intelligent or Location-only matching
+ * ✅ FIXED: Handles providerId as array, no text search dependency
  */
 taskSchema.methods.findMatches = async function (
   this: HydratedDocument<Task, TaskMethods>,
@@ -436,65 +424,115 @@ taskSchema.methods.findMatches = async function (
     this.matchingCriteria.searchTerms = keywords;
 
     if (keywords.length > 0) {
-      // Find services matching keywords, tags, or category
+      // Build service query without text search dependency
       const serviceQuery: any = {
         isActive: true,
-        isDeleted: { $ne: true },
-        $or: [
-          { $text: { $search: keywords.join(" ") } },
-          { tags: { $in: this.tags || [] } },
-        ],
+        deletedAt: null,
       };
 
+      // Build $or conditions
+      const orConditions: any[] = [];
+
+      // Add tag matching
+      if (this.tags && this.tags.length > 0) {
+        orConditions.push({ tags: { $in: this.tags } });
+      }
+
+      // Add category matching
       if (this.category) {
-        serviceQuery.$or.push({ categoryId: this.category });
+        orConditions.push({ categoryId: this.category });
         this.matchingCriteria.categoryMatch = true;
       }
 
-      const matchingServices = await ServiceModel.find(serviceQuery)
-        .populate("providerId")
-        .lean();
+      // Add keyword matching using regex (fallback for text search)
+      if (keywords.length > 0) {
+        const keywordRegex = keywords.map(k => new RegExp(k, 'i'));
+        orConditions.push(
+          { title: { $in: keywordRegex } },
+          { description: { $in: keywordRegex } },
+          { tags: { $in: keywords } }
+        );
+      }
+
+      // Only add $or if we have conditions
+      if (orConditions.length > 0) {
+        serviceQuery.$or = orConditions;
+      } else {
+        // If no conditions, just find active services
+        console.log("No search criteria, finding all active services");
+      }
+
+      // ✅ DON'T populate providerId - keep them as ObjectIds
+      const matchingServices = await ServiceModel.find(serviceQuery).lean();
 
       // Group services by provider
       const servicesByProvider = new Map<string, any[]>();
 
+      // ✅ FIXED: Handle providerId as an array of ObjectIds
       for (const service of matchingServices) {
-        if (service.providerId) {
-          const providerId = service.providerId.toString();
-          if (!servicesByProvider.has(providerId)) {
-            servicesByProvider.set(providerId, []);
+        if (service.providerId && Array.isArray(service.providerId)) {
+          // Loop through each provider ID in the array
+          for (const pid of service.providerId) {
+            // Validate each provider ID (check for null/undefined and valid length)
+            if (
+              pid && 
+              typeof pid === 'object' && 
+              pid.toString &&
+              pid.toString().length === 24
+            ) {
+              const providerIdString = pid.toString();
+              if (!servicesByProvider.has(providerIdString)) {
+                servicesByProvider.set(providerIdString, []);
+              }
+              servicesByProvider.get(providerIdString)!.push(service);
+            }
           }
-          servicesByProvider.get(providerId)!.push(service);
         }
       }
 
       if (servicesByProvider.size > 0) {
-        // Get providers in customer's location
-        const providers = await ProviderModel.find({
-          _id: { $in: Array.from(servicesByProvider.keys()) },
-          $or: [
-            { "locationData.locality": this.customerLocation.locality },
-            { "locationData.city": this.customerLocation.city },
-            { "locationData.region": this.customerLocation.region },
-          ],
-          isDeleted: { $ne: true },
-        }).lean();
+        // ✅ Filter out any invalid IDs before querying
+        const validProviderIds = Array.from(servicesByProvider.keys()).filter(
+          id => id && id.length === 24
+        );
 
-        // Calculate match scores
-        matches = providers.map((provider: any) => {
-          const relevantServices =
-            servicesByProvider.get(provider._id.toString()) || [];
-          return this.calculateIntelligentMatchScore(
-            provider,
-            relevantServices
-          );
-        });
+        if (validProviderIds.length === 0) {
+          console.log("No valid provider IDs found after filtering");
+          // Fallback to location-only
+          strategy = "location-only";
+          this.matchingCriteria.useLocationOnly = true;
+        } else {
+          // Get providers in customer's location
+          const providers = await ProviderModel.find({
+            _id: { $in: validProviderIds },
+            $or: [
+              { "locationData.locality": this.customerLocation.locality },
+              { "locationData.city": this.customerLocation.city },
+              { "locationData.region": this.customerLocation.region },
+            ],
+            isDeleted: { $ne: true },
+          }).lean();
 
-        // Sort by match score
-        matches.sort((a, b) => b.matchScore - a.matchScore);
+          // Calculate match scores
+          matches = providers.map((provider: any) => {
+            const relevantServices =
+              servicesByProvider.get(provider._id.toString()) || [];
+            return this.calculateIntelligentMatchScore(
+              provider,
+              relevantServices
+            );
+          });
 
-        // Filter out low scores
-        matches = matches.filter((m) => m.matchScore >= 40);
+          // Sort by match score
+          matches.sort((a, b) => b.matchScore - a.matchScore);
+
+          // Filter out low scores
+          matches = matches.filter((m) => m.matchScore >= 40);
+        }
+      } else {
+        console.log("No services matched, falling back to location-only");
+        strategy = "location-only";
+        this.matchingCriteria.useLocationOnly = true;
       }
     }
 

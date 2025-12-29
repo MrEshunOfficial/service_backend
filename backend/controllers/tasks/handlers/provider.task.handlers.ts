@@ -18,10 +18,25 @@ import {
 export class ProviderTaskHandlers {
   /**
    * Helper method to get provider profile
+   * First finds UserProfile by userId, then finds ProviderProfile by UserProfile._id
    */
   private static async getProviderProfile(userId: string) {
+    // Import UserProfileModel (adjust the path as needed)
+    const UserProfile = (await import("../../../models/profiles/userProfile.model")).default;
+    
+    // First, get the UserProfile using the User's ID
+    const userProfile = await UserProfile.findOne({
+      userId: userId,
+      isDeleted: { $ne: true },
+    });
+
+    if (!userProfile) {
+      throw new Error("User profile not found");
+    }
+
+    // Then, get the ProviderProfile using the UserProfile's ID
     const provider = await ProviderModel.findOne({
-      userId,
+      profile: userProfile._id,
       isDeleted: { $ne: true },
     });
 

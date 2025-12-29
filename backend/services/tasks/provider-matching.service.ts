@@ -108,6 +108,7 @@ export class TaskMatchingService {
 
   /**
    * Intelligent matching - finds providers based on service relevance
+   * ✅ FIXED: No text search dependency, handles providerId as array
    */
   private async intelligentMatching(
     task: Partial<Task>,
@@ -134,6 +135,11 @@ export class TaskMatchingService {
 
     // Group services by provider
     const servicesByProvider = this.groupServicesByProvider(relevantServices);
+
+    if (servicesByProvider.size === 0) {
+      console.log("No valid providers found in services.");
+      return { matches: [], searchTerms };
+    }
 
     // Get providers in customer's location
     const providers = await this.getProvidersInLocation(
@@ -241,6 +247,7 @@ export class TaskMatchingService {
 
   /**
    * Find services that match the task
+   * ✅ FIXED: Uses regex instead of text search, no populate on providerId
    */
   private async findRelevantServices(
     task: Partial<Task>,
@@ -248,55 +255,79 @@ export class TaskMatchingService {
   ): Promise<any[]> {
     const searchQuery: any = {
       isActive: true,
-      isDeleted: { $ne: true },
-      $or: [],
+      deletedAt: null, // ✅ Fixed: Use deletedAt instead of isDeleted
     };
 
-    // Text search on service title and description
+    const orConditions: any[] = [];
+
+    // ✅ FIXED: Regex-based keyword matching instead of text search
     if (searchTerms.length > 0) {
-      searchQuery.$or.push({
-        $text: { $search: searchTerms.join(" ") },
-      });
+      const keywordRegex = searchTerms.map(k => new RegExp(k, 'i'));
+      orConditions.push(
+        { title: { $in: keywordRegex } },
+        { description: { $in: keywordRegex } },
+        { tags: { $in: searchTerms } }
+      );
     }
 
     // Tag matching
     if (task.tags && task.tags.length > 0) {
-      searchQuery.$or.push({
+      orConditions.push({
         tags: { $in: task.tags },
       });
     }
 
     // Category matching
     if (task.category) {
-      searchQuery.$or.push({
+      orConditions.push({
         categoryId: task.category,
       });
     }
 
     // If no search criteria, return empty
-    if (searchQuery.$or.length === 0) {
+    if (orConditions.length === 0) {
+      console.log("No search criteria provided");
       return [];
     }
 
-    const services = await ServiceModel.find(searchQuery)
-      .populate("providerId")
-      .lean();
+    searchQuery.$or = orConditions;
 
-    return services.filter((s) => s.providerId); // Ensure provider exists
+    // ✅ FIXED: Don't populate providerId - keep as ObjectIds
+    const services = await ServiceModel.find(searchQuery).lean();
+
+    // ✅ FIXED: Filter services with valid providerIds (handle array)
+    return services.filter((s) => {
+      if (!s.providerId || !Array.isArray(s.providerId)) {
+        return false;
+      }
+      // Check if array has at least one valid ObjectId
+      return s.providerId.some(
+        pid => pid && typeof pid === 'object' && pid.toString().length === 24
+      );
+    });
   }
 
   /**
    * Group services by provider ID
+   * ✅ FIXED: Handles providerId as array
    */
   private groupServicesByProvider(services: any[]): Map<string, any[]> {
     const grouped = new Map<string, any[]>();
 
     for (const service of services) {
-      const providerId = service.providerId._id.toString();
-      if (!grouped.has(providerId)) {
-        grouped.set(providerId, []);
+      // ✅ FIXED: Handle providerId as array
+      if (service.providerId && Array.isArray(service.providerId)) {
+        for (const pid of service.providerId) {
+          // Validate each provider ID
+          if (pid && typeof pid === 'object' && pid.toString && pid.toString().length === 24) {
+            const providerIdString = pid.toString();
+            if (!grouped.has(providerIdString)) {
+              grouped.set(providerIdString, []);
+            }
+            grouped.get(providerIdString)!.push(service);
+          }
+        }
       }
-      grouped.get(providerId)!.push(service);
     }
 
     return grouped;
@@ -309,8 +340,16 @@ export class TaskMatchingService {
     providerIds: string[],
     customerLocation: UserLocation
   ): Promise<any[]> {
+    // ✅ Added validation for provider IDs
+    const validProviderIds = providerIds.filter(id => id && id.length === 24);
+
+    if (validProviderIds.length === 0) {
+      console.log("No valid provider IDs to query");
+      return [];
+    }
+
     return ProviderModel.find({
-      _id: { $in: providerIds },
+      _id: { $in: validProviderIds },
       $or: [
         { "locationData.locality": customerLocation.locality },
         { "locationData.city": customerLocation.city },
@@ -555,8 +594,14 @@ export class TaskMatchingService {
         { "customerLocation.locality": providerLocation.locality },
         { "customerLocation.city": providerLocation.city },
         { "customerLocation.region": providerLocation.region },
-        { expiresAt: { $gt: new Date() } },
-        { expiresAt: null },
+      ],
+      $and: [
+        {
+          $or: [
+            { expiresAt: { $gt: new Date() } },
+            { expiresAt: null }
+          ]
+        }
       ],
       // Exclude tasks where provider already expressed interest
       "interestedProviders.providerId": { $ne: providerId },
@@ -638,9 +683,9 @@ export class TaskMatchingService {
     // Try to find matching services
     const searchTerms = this.extractSearchTerms(task);
     const services = await ServiceModel.find({
-      providerId,
+      providerId: providerId, // Note: This might need to be $in if providerId is array
       isActive: true,
-      isDeleted: { $ne: true },
+      deletedAt: null,
     }).lean();
 
     if (services.length === 0) {

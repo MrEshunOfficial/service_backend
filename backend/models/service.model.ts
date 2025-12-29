@@ -88,11 +88,20 @@ const serviceSchema = new Schema<Service, IServiceModel, ServiceMethods>(
     },
 
     // Provider-specific fields
-    providerId: [{
-      type: Schema.Types.ObjectId,
-      ref: "ProviderProfile",
-      index: true
-    }],
+   providerId: {
+  type: [{
+    type: Schema.Types.ObjectId,
+    ref: "ProviderProfile",
+  }],
+  required: true,
+  validate: {
+    validator: function(v: any[]) {
+      return v && v.length > 0 && v.every(id => id && id.toString().length === 24);
+    },
+    message: 'At least one valid provider ID is required'
+  },
+  index: true
+},
 
     // Pricing and availability
     servicePricing: {
