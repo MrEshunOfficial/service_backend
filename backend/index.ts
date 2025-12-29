@@ -17,6 +17,7 @@ import fileRoutes from "./routes/files.routes";
 import categoryRoutes from "./routes/category.routes";
 import providerProfileRoutes from "./routes/profiles/provider.profile.routes";
 import taskRoutes from "./routes/task.routes";
+import clientProfileRoutes from "./routes/profiles/client.profile.routes";
 
 // import taskRoutes from "./routes/task.routes";
 
@@ -67,6 +68,7 @@ async function startServer() {
     app.use("/api/services", serviceRoutes);
     app.use("/api/providers", providerProfileRoutes);
     app.use("/api/tasks", taskRoutes);
+    app.use("/api/clients", clientProfileRoutes);
 
     // Error handling middleware
     app.use(

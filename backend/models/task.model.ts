@@ -446,7 +446,7 @@ taskSchema.methods.findMatches = async function (
 
       // Add keyword matching using regex (fallback for text search)
       if (keywords.length > 0) {
-        const keywordRegex = keywords.map(k => new RegExp(k, 'i'));
+        const keywordRegex = keywords.map((k) => new RegExp(k, "i"));
         orConditions.push(
           { title: { $in: keywordRegex } },
           { description: { $in: keywordRegex } },
@@ -475,8 +475,8 @@ taskSchema.methods.findMatches = async function (
           for (const pid of service.providerId) {
             // Validate each provider ID (check for null/undefined and valid length)
             if (
-              pid && 
-              typeof pid === 'object' && 
+              pid &&
+              typeof pid === "object" &&
               pid.toString &&
               pid.toString().length === 24
             ) {
@@ -493,7 +493,7 @@ taskSchema.methods.findMatches = async function (
       if (servicesByProvider.size > 0) {
         // ✅ Filter out any invalid IDs before querying
         const validProviderIds = Array.from(servicesByProvider.keys()).filter(
-          id => id && id.length === 24
+          (id) => id && id.length === 24
         );
 
         if (validProviderIds.length === 0) {

@@ -1,5 +1,5 @@
-// types/customer-profile.types.ts
-import { Types, Model } from "mongoose";
+// types/client-profile.types.ts
+import { Types, Model, HydratedDocument } from "mongoose";
 import {
   BaseEntity,
   ClientContactDetails,
@@ -9,9 +9,9 @@ import {
 } from "../base.types";
 
 /**
- * Primary Customer Profile Entity
+ * Primary Client Profile Entity
  */
-export interface CustomerProfile extends BaseEntity, SoftDeletable {
+export interface ClientProfile extends BaseEntity, SoftDeletable {
   // Linking User Profile
   profile: Types.ObjectId;
 
@@ -25,39 +25,38 @@ export interface CustomerProfile extends BaseEntity, SoftDeletable {
   /**
    * Contact & Location
    */
-  customerContactInfo: ClientContactDetails;
+  clientContactInfo: ClientContactDetails;
   savedAddresses?: UserLocation[];
-  defaultAddressIndex?: number; // Index of the default address in savedAddresses
+  defaultAddressIndex?: number;
 
   /**
    * Preferences & Settings
    */
   preferences?: {
-    preferredCategories?: Types.ObjectId[]; // Service categories they're interested in
+    preferredCategories?: Types.ObjectId[]; // Reference to Service Categories
     communicationPreferences?: {
       emailNotifications: boolean;
       smsNotifications: boolean;
       pushNotifications: boolean;
     };
-    languagePreference?: string; // e.g., "en", "tw" (Twi), etc.
+    languagePreference?: string;
   };
 
   /**
    * Service History & Favorites
    */
-  favoriteServices?: Types.ObjectId[]; // Services they've bookmarked
-  favoriteProviders?: Types.ObjectId[]; // Providers they've bookmarked
-  serviceHistory?: Types.ObjectId[]; // References to past bookings/orders
+  favoriteServices?: Types.ObjectId[]; // Reference to Services
+  favoriteProviders?: Types.ObjectId[]; // Reference to ProviderProfiles
+  serviceHistory?: Types.ObjectId[]; // Reference to Bookings/Orders
 
   /**
    * Payment Information
    */
   savedPaymentMethods?: {
     type: "mobile_money" | "card" | "bank_account";
-    provider?: string; // e.g., "MTN", "Vodafone", "AirtelTigo"
-    lastFourDigits?: string;
+    provider?: string; // e.g., "MTN", "Vodafone", "Visa"
     isDefault: boolean;
-    label?: string; // e.g., "Personal", "Business"
+    label?: string; // e.g., "Personal MTN", "Work Card"
   }[];
 
   /**
@@ -84,8 +83,8 @@ export interface CustomerProfile extends BaseEntity, SoftDeletable {
 /**
  * Instance Methods Interface
  */
-export interface CustomerProfileMethods {
-  softDelete(deletedBy?: string): Promise<this>;
+export interface ClientProfileMethods {
+  softDelete(deletedBy?: Types.ObjectId): Promise<this>;
   restore(): Promise<this>;
   addFavoriteService(serviceId: string): Promise<this>;
   removeFavoriteService(serviceId: string): Promise<this>;
@@ -99,35 +98,46 @@ export interface CustomerProfileMethods {
 /**
  * Static Methods Interface
  */
-export interface CustomerProfileModel
-  extends Model<CustomerProfile, {}, CustomerProfileMethods> {
-  findActive(): Promise<CustomerProfile[]>;
-  findByProfile(profileId: string): Promise<CustomerProfile | null>;
-  findByLocation(region: string, city?: string): Promise<CustomerProfile[]>;
-  findByFavoriteService(serviceId: string): Promise<CustomerProfile[]>;
-  findVerified(): Promise<CustomerProfile[]>;
+export interface ClientProfileModel
+  extends Model<ClientProfile, {}, ClientProfileMethods> {
+  findActive(): Promise<ClientProfileDocument[]>;
+  findByProfile(profileId: string): Promise<ClientProfileDocument | null>;
+  findByLocation(
+    region: string,
+    city?: string
+  ): Promise<ClientProfileDocument[]>;
+  findByFavoriteService(serviceId: string): Promise<ClientProfileDocument[]>;
+  findVerified(): Promise<ClientProfileDocument[]>;
 }
 
 /**
- * Request Body: Create Customer Profile
+ * Complete Client Profile Document Type
  */
-export interface CreateCustomerProfileRequestBody
-  extends Omit<CustomerProfile, "_id" | "createdAt" | "updatedAt"> {}
+export type ClientProfileDocument = HydratedDocument<
+  ClientProfile,
+  ClientProfileMethods
+>;
 
 /**
- * Request Body: Update Customer Profile
+ * Request Body: Create Client Profile
  */
-export interface UpdateCustomerProfileRequestBody
+export interface CreateClientProfileRequestBody
+  extends Omit<ClientProfile, "_id" | "createdAt" | "updatedAt"> {}
+
+/**
+ * Request Body: Update Client Profile
+ */
+export interface UpdateClientProfileRequestBody
   extends Partial<
-    Omit<CustomerProfile, "_id" | "createdAt" | "updatedAt" | "profile">
+    Omit<ClientProfile, "_id" | "createdAt" | "updatedAt" | "profile">
   > {}
 
 /**
- * Standard API Response for Customer Profile
+ * Standard API Response for Client Profile
  */
-export interface CustomerProfileResponse {
+export interface ClientProfileResponse {
   message: string;
-  customerProfile?: Partial<CustomerProfile>;
+  clientProfile?: Partial<ClientProfile>;
   error?: string;
 }
 
@@ -163,17 +173,15 @@ export interface UpdateCommunicationPreferencesRequestBody {
  */
 export interface AddPaymentMethodRequestBody {
   type: "mobile_money" | "card" | "bank_account";
-  provider?: string;
-  lastFourDigits?: string;
+  provider?: string; // e.g., "MTN", "Vodafone", "Visa"
   isDefault: boolean;
-  label?: string;
+  label?: string; // e.g., "Personal MTN", "Work Card"
 }
 
 /**
  * Enhanced Response with Additional Data
  */
-export interface CustomerProfileDetailedResponse
-  extends CustomerProfileResponse {
+export interface ClientProfileDetailedResponse extends ClientProfileResponse {
   favoriteServicesCount?: number;
   favoriteProvidersCount?: number;
   totalBookings?: number;

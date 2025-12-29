@@ -11,6 +11,7 @@ import {
   ProviderIdImagesUploadHandler,
   ProviderGalleryImagesUploadHandler,
 } from "./handlers/claudinary.handlers/provider-files.handlers";
+import { ClientIdImagesUploadHandler } from "./handlers/claudinary.handlers/client-id-details.handler";
 
 // Configure multer for memory storage
 const upload = multer({
@@ -28,6 +29,7 @@ export class CloudinaryFileController {
   private serviceCoverHandler: ServiceCoverHandler;
   private providerIdImagesUploadHandler: ProviderIdImagesUploadHandler;
   private providerGalleryImagesUploadHandler: ProviderGalleryImagesUploadHandler;
+  private clientIdImagesUploadHandler: ClientIdImagesUploadHandler;
   public uploadMiddleware: multer.Multer;
 
   // Profile Picture Endpoints
@@ -60,6 +62,14 @@ export class CloudinaryFileController {
   public deleteProviderGalleryImage;
   public getOptimizedProviderGalleryImage;
 
+  // Client ID Images Endpoints
+  public uploadClientIdImageSingle;
+  public uploadClientIdImagesMultiple;
+  public getAllClientIdImages;
+  public getSingleClientIdImage;
+  public deleteClientIdImage;
+  public deleteAllClientIdImages;
+
   constructor(cloudinaryConfig: any) {
     this.cloudinaryService = new CloudinaryFileService(cloudinaryConfig);
     this.mongoService = new MongoDBFileService();
@@ -87,6 +97,10 @@ export class CloudinaryFileController {
         this.cloudinaryService,
         this.mongoService
       );
+    this.clientIdImagesUploadHandler = new ClientIdImagesUploadHandler(
+      this.cloudinaryService,
+      this.mongoService
+    );
 
     // ============================================
     // Bind Profile Picture Handlers
@@ -170,6 +184,32 @@ export class CloudinaryFileController {
     this.getOptimizedProviderGalleryImage =
       this.providerGalleryImagesUploadHandler.getOptimized.bind(
         this.providerGalleryImagesUploadHandler
+      );
+
+    // ============================================
+    // Bind Client ID Images Upload Handlers
+    // ============================================
+    this.uploadClientIdImageSingle =
+      this.clientIdImagesUploadHandler.uploadSingle.bind(
+        this.clientIdImagesUploadHandler
+      );
+    this.uploadClientIdImagesMultiple =
+      this.clientIdImagesUploadHandler.uploadMultiple.bind(
+        this.clientIdImagesUploadHandler
+      );
+    this.getAllClientIdImages = this.clientIdImagesUploadHandler.getAll.bind(
+      this.clientIdImagesUploadHandler
+    );
+    this.getSingleClientIdImage =
+      this.clientIdImagesUploadHandler.getSingle.bind(
+        this.clientIdImagesUploadHandler
+      );
+    this.deleteClientIdImage = this.clientIdImagesUploadHandler.delete.bind(
+      this.clientIdImagesUploadHandler
+    );
+    this.deleteAllClientIdImages =
+      this.clientIdImagesUploadHandler.deleteAll.bind(
+        this.clientIdImagesUploadHandler
       );
   }
 }

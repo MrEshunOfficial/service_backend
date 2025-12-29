@@ -17,11 +17,18 @@ export class CloudinaryConfigService {
       secure: true, // HTTPS URLs
     });
   }
-
   /**
    * Helper method to get MIME type from format
    */
-  private getMimeType(format: string, resourceType: string): string {
+  private getMimeType(
+    format: string | undefined,
+    resourceType: string
+  ): string {
+    // Handle undefined or empty format
+    if (!format) {
+      return `${resourceType}/unknown`;
+    }
+
     const mimeTypeMap: Record<string, string> = {
       // Images
       jpg: "image/jpeg",

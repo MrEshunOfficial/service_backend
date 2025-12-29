@@ -24,18 +24,18 @@ export const authenticateToken = async (
     }
 
     if (!token) {
-      res.status(401).json({ 
+      res.status(401).json({
         success: false,
-        message: "Access token required" 
+        message: "Access token required",
       });
       return;
     }
 
     // Verify JWT secret exists
     if (!process.env.JWT_SECRET) {
-      res.status(500).json({ 
+      res.status(500).json({
         success: false,
-        message: "Internal server error" 
+        message: "Internal server error",
       });
       return;
     }
@@ -46,16 +46,17 @@ export const authenticateToken = async (
       decoded = jwt.verify(token, process.env.JWT_SECRET) as { userId: string };
     } catch (jwtError) {
       // Clear invalid token cookie
-      res.clearCookie('token', {
+      res.clearCookie("token", {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "strict",
       });
-      
+
       res.status(401).json({
         success: false,
         message: "Invalid or expired token",
-        error: jwtError instanceof Error ? jwtError.message : "Unknown JWT error",
+        error:
+          jwtError instanceof Error ? jwtError.message : "Unknown JWT error",
       });
       return;
     }
@@ -67,18 +68,18 @@ export const authenticateToken = async (
     // CRITICAL FIX: If user doesn't exist in DB, clear token and reject
     if (!user) {
       console.log("❌ User not found in database, clearing token");
-      
+
       // Clear the invalid token cookie
-      res.clearCookie('token', {
+      res.clearCookie("token", {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "strict",
       });
-      
-      res.status(401).json({ 
+
+      res.status(401).json({
         success: false,
         message: "Invalid token - user account not found",
-        userDeleted: true // Flag to help frontend handle this case
+        userDeleted: true, // Flag to help frontend handle this case
       });
       return;
     }
@@ -90,14 +91,14 @@ export const authenticateToken = async (
     next();
   } catch (error) {
     console.error("Authentication error:", error);
-    
+
     // Clear potentially corrupted token
-    res.clearCookie('token', {
+    res.clearCookie("token", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
     });
-    
+
     res.status(401).json({
       success: false,
       message: "Authentication failed",
@@ -113,9 +114,9 @@ export const requireVerification = (
   next: NextFunction
 ): void => {
   if (!req.user?.isEmailVerified) {
-    res.status(403).json({ 
+    res.status(403).json({
       success: false,
-      message: "Email verification required" 
+      message: "Email verification required",
     });
     return;
   }
@@ -129,17 +130,17 @@ export const requireAdmin = (
 ): void => {
   // Check if user exists and is admin
   if (!req.user) {
-    res.status(401).json({ 
+    res.status(401).json({
       success: false,
-      message: "Authentication required" 
+      message: "Authentication required",
     });
     return;
   }
 
   if (!req.user.isAdmin && !req.user.isSuperAdmin) {
-    res.status(403).json({ 
+    res.status(403).json({
       success: false,
-      message: "Admin access required" 
+      message: "Admin access required",
     });
     return;
   }
@@ -153,17 +154,17 @@ export const requireSuperAdmin = (
 ): void => {
   // Check if user exists and is super admin
   if (!req.user) {
-    res.status(401).json({ 
+    res.status(401).json({
       success: false,
-      message: "Authentication required" 
+      message: "Authentication required",
     });
     return;
   }
 
   if (!req.user.isSuperAdmin) {
-    res.status(403).json({ 
+    res.status(403).json({
       success: false,
-      message: "Super admin access required" 
+      message: "Super admin access required",
     });
     return;
   }
@@ -217,7 +218,7 @@ export const optionalAuth = async (
       } else {
         // User was deleted - clear the invalid token
         console.log("User deleted, clearing token in optionalAuth");
-        res.clearCookie('token', {
+        res.clearCookie("token", {
           httpOnly: true,
           secure: process.env.NODE_ENV === "production",
           sameSite: "strict",
@@ -226,7 +227,7 @@ export const optionalAuth = async (
     } catch (jwtError) {
       // Invalid token - clear it and continue as unauthenticated
       console.log("Invalid token in optionalAuth, clearing cookie");
-      res.clearCookie('token', {
+      res.clearCookie("token", {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "strict",

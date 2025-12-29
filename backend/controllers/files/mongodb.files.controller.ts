@@ -9,6 +9,7 @@ import {
   ProviderIdImagesHandlers,
   ProviderGalleryImagesHandlers,
 } from "./handlers/mongodb.handlers/provider-files.handlers";
+import { ClientIdImagesHandlers } from "./handlers/mongodb.handlers/client-id-details.handler";
 
 export class MongoDBFileController {
   private fileService: MongoDBFileService;
@@ -17,6 +18,7 @@ export class MongoDBFileController {
   private serviceCoverHandlers: ServiceCoverHandlers;
   private providerIdImagesHandlers: ProviderIdImagesHandlers;
   private providerGalleryImagesHandlers: ProviderGalleryImagesHandlers;
+  private clientIdImagesHandlers: ClientIdImagesHandlers;
 
   // Profile Picture Endpoints
   public getProfilePictureRecord;
@@ -70,6 +72,22 @@ export class MongoDBFileController {
   public getProviderGalleryImagesStats;
   public cleanupArchivedProviderGalleryImages;
 
+  // Client ID Images Endpoints
+  public getClientIdImagesRecords;
+  public getClientIdImageRecord;
+  public getClientIdImagesHistory;
+  public updateClientIdImageMetadata;
+  public archiveClientIdImage;
+  public restoreClientIdImage;
+  public deleteClientIdImage;
+  public getClientIdImagesStats;
+  public cleanupArchivedClientIdImages;
+  public bulkArchiveClientIdImages;
+  public bulkRestoreClientIdImages;
+  public bulkDeleteClientIdImages;
+  public verifyClientIdImageLinks;
+  public syncClientIdImageLinks;
+
   constructor() {
     this.fileService = new MongoDBFileService();
     this.profilePictureHandlers = new ProfilePictureHandlers(this.fileService);
@@ -81,6 +99,7 @@ export class MongoDBFileController {
     this.providerGalleryImagesHandlers = new ProviderGalleryImagesHandlers(
       this.fileService
     );
+    this.clientIdImagesHandlers = new ClientIdImagesHandlers(this.fileService);
 
     // ============================================
     // Bind Profile Picture Handlers
@@ -243,5 +262,50 @@ export class MongoDBFileController {
       this.providerGalleryImagesHandlers.cleanupArchived.bind(
         this.providerGalleryImagesHandlers
       );
+
+    // ============================================
+    // Bind Client ID Images Handlers
+    // ============================================
+    this.getClientIdImagesRecords = this.clientIdImagesHandlers.getRecords.bind(
+      this.clientIdImagesHandlers
+    );
+    this.getClientIdImageRecord = this.clientIdImagesHandlers.getRecord.bind(
+      this.clientIdImagesHandlers
+    );
+    this.getClientIdImagesHistory = this.clientIdImagesHandlers.getHistory.bind(
+      this.clientIdImagesHandlers
+    );
+    this.updateClientIdImageMetadata =
+      this.clientIdImagesHandlers.updateMetadata.bind(
+        this.clientIdImagesHandlers
+      );
+    this.archiveClientIdImage = this.clientIdImagesHandlers.archive.bind(
+      this.clientIdImagesHandlers
+    );
+    this.restoreClientIdImage = this.clientIdImagesHandlers.restore.bind(
+      this.clientIdImagesHandlers
+    );
+    this.deleteClientIdImage = this.clientIdImagesHandlers.delete.bind(
+      this.clientIdImagesHandlers
+    );
+    this.getClientIdImagesStats = this.clientIdImagesHandlers.getStats.bind(
+      this.clientIdImagesHandlers
+    );
+    this.cleanupArchivedClientIdImages =
+      this.clientIdImagesHandlers.cleanupArchived.bind(
+        this.clientIdImagesHandlers
+      );
+    this.bulkArchiveClientIdImages =
+      this.clientIdImagesHandlers.bulkArchive.bind(this.clientIdImagesHandlers);
+    this.bulkRestoreClientIdImages =
+      this.clientIdImagesHandlers.bulkRestore.bind(this.clientIdImagesHandlers);
+    this.bulkDeleteClientIdImages = this.clientIdImagesHandlers.bulkDelete.bind(
+      this.clientIdImagesHandlers
+    );
+    this.verifyClientIdImageLinks =
+      this.clientIdImagesHandlers.verifyLinks.bind(this.clientIdImagesHandlers);
+    this.syncClientIdImageLinks = this.clientIdImagesHandlers.syncLinks.bind(
+      this.clientIdImagesHandlers
+    );
   }
 }

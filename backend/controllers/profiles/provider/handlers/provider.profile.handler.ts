@@ -1,6 +1,5 @@
 // handlers/profiles/provider/provider-profile.handlers.ts
 import { Response } from "express";
-import { Types } from "mongoose";
 import { ProviderProfileService } from "../../../../services/profiles/provider.profile.service";
 import {
   CreateProviderProfileRequestBody,

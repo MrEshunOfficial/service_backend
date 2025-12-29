@@ -450,4 +450,143 @@ router.get(
   mongoController.getProviderGalleryImagesRecords
 );
 
+// ============================================
+// CLIENT ID IMAGES ROUTES
+// ============================================
+
+// Cloudinary operations (upload, get, delete)
+// IMPORTANT: Upload uses authenticated user's ID, management uses clientId
+// This allows users to upload ID images BEFORE creating client profile
+
+// Upload multiple ID images (uses authenticated userId)
+router.post(
+  "/cloudinary/client/id-images/upload-multiple",
+  authenticateToken,
+  cloudinaryController.uploadMiddleware.array("idImages", 5), // Max 5 files
+  cloudinaryController.uploadClientIdImagesMultiple
+);
+
+// Upload single ID image (uses authenticated userId)
+router.post(
+  "/cloudinary/client/id-images/upload",
+  authenticateToken,
+  cloudinaryController.uploadMiddleware.single("idImage"),
+  cloudinaryController.uploadClientIdImageSingle
+);
+
+// Delete single ID image from Cloudinary (by clientId after profile creation)
+router.delete(
+  "/cloudinary/client/:clientId/id-images/:fileId",
+  authenticateToken,
+  cloudinaryController.deleteClientIdImage
+);
+
+// Delete all ID images from Cloudinary (by clientId after profile creation)
+router.delete(
+  "/cloudinary/client/:clientId/id-images",
+  authenticateToken,
+  cloudinaryController.deleteAllClientIdImages
+);
+
+// MongoDB operations (metadata, history, stats, archive/restore, bulk operations)
+// IMPORTANT: Place specific routes BEFORE :fileId routes
+
+// Get ID images history (by clientId)
+router.get(
+  "/client/:clientId/id-images/history/all",
+  authenticateToken,
+  mongoController.getClientIdImagesHistory
+);
+
+// Get ID images statistics (by clientId)
+router.get(
+  "/client/:clientId/id-images/stats/overview",
+  authenticateToken,
+  mongoController.getClientIdImagesStats
+);
+
+// Cleanup old archived ID images (by clientId)
+router.delete(
+  "/client/:clientId/id-images/cleanup",
+  authenticateToken,
+  mongoController.cleanupArchivedClientIdImages
+);
+
+// Verify ID image links integrity (by clientId)
+router.get(
+  "/client/:clientId/id-images/verify-links",
+  authenticateToken,
+  mongoController.verifyClientIdImageLinks
+);
+
+// Sync ID image links with client profile (by clientId)
+router.post(
+  "/client/:clientId/id-images/sync-links",
+  authenticateToken,
+  mongoController.syncClientIdImageLinks
+);
+
+// Bulk archive ID images (by clientId)
+router.post(
+  "/client/:clientId/id-images/bulk-archive",
+  authenticateToken,
+  mongoController.bulkArchiveClientIdImages
+);
+
+// Bulk restore ID images (by clientId)
+router.post(
+  "/client/:clientId/id-images/bulk-restore",
+  authenticateToken,
+  mongoController.bulkRestoreClientIdImages
+);
+
+// Bulk delete ID images (by clientId)
+router.delete(
+  "/client/:clientId/id-images/bulk-delete",
+  authenticateToken,
+  mongoController.bulkDeleteClientIdImages
+);
+
+// Update ID image metadata
+router.patch(
+  "/client/:clientId/id-images/:fileId/metadata",
+  authenticateToken,
+  mongoController.updateClientIdImageMetadata
+);
+
+// Archive ID image
+router.post(
+  "/client/:clientId/id-images/:fileId/archive",
+  authenticateToken,
+  mongoController.archiveClientIdImage
+);
+
+// Restore archived ID image
+router.post(
+  "/client/:clientId/id-images/:fileId/restore",
+  authenticateToken,
+  mongoController.restoreClientIdImage
+);
+
+// Permanently delete ID image
+router.delete(
+  "/client/:clientId/id-images/:fileId",
+  authenticateToken,
+  mongoController.deleteClientIdImage
+);
+
+// Get single ID image
+router.get(
+  "/client/:clientId/id-images/:fileId",
+  authenticateToken,
+  mongoController.getClientIdImageRecord
+);
+
+// Get all active ID images
+router.get(
+  "/client/:clientId/id-images",
+  authenticateToken,
+  mongoController.getClientIdImagesRecords
+);
+
 export default router;
