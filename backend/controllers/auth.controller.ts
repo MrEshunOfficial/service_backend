@@ -447,3 +447,28 @@ export const restoreUser = handleAsync(
     });
   }
 );
+
+export const verifyUser = handleAsync(
+  async (req: AuthenticatedRequest, res: Response) => {
+    // If authenticateToken middleware passes, user exists
+    // The middleware already checked if user exists in DB
+    
+    if (!req.user) {
+      return sendErrorResponse(res, 401, "User not found");
+    }
+
+    return sendSuccessResponse(res, 200, "User verified successfully", {
+      success: true,
+      exists: true,
+      userId: req.userId,
+      user: {
+        id: req.user._id,
+        email: req.user.email,
+        isEmailVerified: req.user.isEmailVerified,
+        isAdmin: req.user.isAdmin,
+        isSuperAdmin: req.user.isSuperAdmin,
+      }
+    });
+  }
+);
+

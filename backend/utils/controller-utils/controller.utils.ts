@@ -44,3 +44,4 @@ export const applySuperAdminProperties = (userDoc: any) => {
   userDoc.isVerified = true;
   return userDoc;
 };
+

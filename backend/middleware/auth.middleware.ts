@@ -3,36 +3,40 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { User } from "../models/user.model";
 
-// Remove the custom AuthRequest interface - use the global Express.Request instead
 export const authenticateToken = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    // Check if cookies object exists
     console.log("Cookies object:", req.cookies);
     console.log("Authorization header:", req.headers.authorization);
 
-    // Get token from cookies (if cookies exist) or Authorization header
+    // Get token from cookies or Authorization header
     let token: string | undefined;
     if (req.cookies && req.cookies.token) {
       token = req.cookies.token;
     } else if (req.headers.authorization) {
       const authHeader = req.headers.authorization;
       if (authHeader.startsWith("Bearer ")) {
-        token = authHeader.split(" ")[1];
+        token = authHeader.substring(7);
       }
     }
 
     if (!token) {
-      res.status(401).json({ message: "Access token required" });
+      res.status(401).json({ 
+        success: false,
+        message: "Access token required" 
+      });
       return;
     }
 
     // Verify JWT secret exists
     if (!process.env.JWT_SECRET) {
-      res.status(500).json({ message: "Internal server error" });
+      res.status(500).json({ 
+        success: false,
+        message: "Internal server error" 
+      });
       return;
     }
 
@@ -41,30 +45,62 @@ export const authenticateToken = async (
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET) as { userId: string };
     } catch (jwtError) {
+      // Clear invalid token cookie
+      res.clearCookie('token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+      });
+      
       res.status(401).json({
-        message: "Invalid token",
-        error:
-          jwtError instanceof Error ? jwtError.message : "Unknown JWT error",
+        success: false,
+        message: "Invalid or expired token",
+        error: jwtError instanceof Error ? jwtError.message : "Unknown JWT error",
       });
       return;
     }
 
-    // Find user
+    // Find user in database
     const user = await User.findById(decoded.userId);
     console.log("User found:", user ? "Yes" : "No");
 
+    // CRITICAL FIX: If user doesn't exist in DB, clear token and reject
     if (!user) {
-      res.status(401).json({ message: "Invalid token - user not found" });
+      console.log("❌ User not found in database, clearing token");
+      
+      // Clear the invalid token cookie
+      res.clearCookie('token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+      });
+      
+      res.status(401).json({ 
+        success: false,
+        message: "Invalid token - user account not found",
+        userDeleted: true // Flag to help frontend handle this case
+      });
       return;
     }
 
+    // Attach user data to request
     req.userId = decoded.userId;
     req.user = user;
 
     next();
   } catch (error) {
+    console.error("Authentication error:", error);
+    
+    // Clear potentially corrupted token
+    res.clearCookie('token', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+    });
+    
     res.status(401).json({
-      message: "Invalid token",
+      success: false,
+      message: "Authentication failed",
       error: error instanceof Error ? error.message : "Unknown error",
     });
     return;
@@ -77,7 +113,10 @@ export const requireVerification = (
   next: NextFunction
 ): void => {
   if (!req.user?.isEmailVerified) {
-    res.status(403).json({ message: "Email verification required" });
+    res.status(403).json({ 
+      success: false,
+      message: "Email verification required" 
+    });
     return;
   }
   next();
@@ -88,8 +127,20 @@ export const requireAdmin = (
   res: Response,
   next: NextFunction
 ): void => {
-  if (!req.user?.isAdmin) {
-    res.status(403).json({ message: "Admin access required" });
+  // Check if user exists and is admin
+  if (!req.user) {
+    res.status(401).json({ 
+      success: false,
+      message: "Authentication required" 
+    });
+    return;
+  }
+
+  if (!req.user.isAdmin && !req.user.isSuperAdmin) {
+    res.status(403).json({ 
+      success: false,
+      message: "Admin access required" 
+    });
     return;
   }
   next();
@@ -100,8 +151,20 @@ export const requireSuperAdmin = (
   res: Response,
   next: NextFunction
 ): void => {
-  if (!req.user?.isSuperAdmin) {
-    res.status(403).json({ message: "Super admin access required" });
+  // Check if user exists and is super admin
+  if (!req.user) {
+    res.status(401).json({ 
+      success: false,
+      message: "Authentication required" 
+    });
+    return;
+  }
+
+  if (!req.user.isSuperAdmin) {
+    res.status(403).json({ 
+      success: false,
+      message: "Super admin access required" 
+    });
     return;
   }
   next();
@@ -124,7 +187,7 @@ export const optionalAuth = async (
     } else if (req.headers.authorization) {
       const authHeader = req.headers.authorization;
       if (authHeader.startsWith("Bearer ")) {
-        token = authHeader.split(" ")[1];
+        token = authHeader.substring(7);
       }
     }
 
@@ -136,7 +199,7 @@ export const optionalAuth = async (
 
     // Verify JWT secret exists
     if (!process.env.JWT_SECRET) {
-      next(); // Continue without auth rather than failing
+      next();
       return;
     }
 
@@ -146,20 +209,33 @@ export const optionalAuth = async (
         userId: string;
       };
 
-      // Find user
+      // Find user - IMPORTANT: Check if user still exists
       const user = await User.findById(decoded.userId);
       if (user) {
         req.userId = decoded.userId;
         req.user = user;
+      } else {
+        // User was deleted - clear the invalid token
+        console.log("User deleted, clearing token in optionalAuth");
+        res.clearCookie('token', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: "strict",
+        });
       }
     } catch (jwtError) {
-      // Invalid token - continue as unauthenticated rather than failing
-      console.log("Invalid token, continuing as unauthenticated");
+      // Invalid token - clear it and continue as unauthenticated
+      console.log("Invalid token in optionalAuth, clearing cookie");
+      res.clearCookie('token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+      });
     }
 
     next();
   } catch (error) {
-    // Any error - continue without auth rather than failing
+    // Any error - continue without auth
     next();
   }
 };

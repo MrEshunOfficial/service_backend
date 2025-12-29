@@ -1,4 +1,7 @@
-// routes/auth.routes.ts
+// ============================================
+// COMPLETE UPDATED auth.routes.ts FILE
+// ============================================
+
 import express from "express";
 import {
   authenticateToken,
@@ -18,6 +21,7 @@ import {
   refreshToken,
   deleteAccount,
   restoreAccount,
+  verifyUser, // NEW IMPORT
   // Admin methods
   getAllUsers,
   updateUserRole,
@@ -65,6 +69,9 @@ router.get("/status", authenticateToken, (req, res) => {
     user: req.user ? User : null,
   });
 });
+
+// NEW: User verification route for middleware
+router.get("/verify-user", authenticateToken, verifyUser);
 
 // Access verification routes (simplified)
 router.get(
@@ -161,4 +168,3 @@ router.get("/health", (req, res) => {
 });
 
 export default router;
-
