@@ -1,6 +1,6 @@
 // types/booking.types.ts
 import { Types, Model, HydratedDocument } from "mongoose";
-import { BaseEntity, SoftDeletable, UserLocation } from "./base.types";
+import { BaseEntity, SoftDeletable, UserLocation, UserRole } from "./base.types";
 
 /**
  * Booking Status
@@ -66,7 +66,7 @@ export interface Booking extends BaseEntity, SoftDeletable {
 
   // Cancellation/rejection
   cancellationReason?: string;
-  cancelledBy?: "client" | "provider";
+  cancelledBy?: UserRole.CUSTOMER | UserRole.PROVIDER
   rejectionReason?: string;
 
   // Provider response message
@@ -85,7 +85,7 @@ export interface BookingMethods {
   reject(reason: string): Promise<this>;
   startService(): Promise<this>;
   complete(finalPrice?: number): Promise<this>;
-  cancel(reason: string, cancelledBy: "client" | "provider"): Promise<this>;
+  cancel(reason: string, cancelledBy: UserRole.CUSTOMER | UserRole.PROVIDER): Promise<this>;
 }
 
 /**

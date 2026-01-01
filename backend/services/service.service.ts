@@ -156,70 +156,70 @@ class ServiceService {
    * Create a new service
    * Automatically links any orphaned cover image uploaded before service creation
    */
-  async createService(data: CreateServiceDTO): Promise<Service> {
-    try {
-      // Generate unique slug
-      const baseSlug = slugify(data.title, { lower: true, strict: true });
-      const slug = await this.generateUniqueSlug(baseSlug);
+async createService(data: CreateServiceDTO): Promise<Service> {
+  try {
+    // Generate unique slug
+    const baseSlug = slugify(data.title, { lower: true, strict: true });
+    const slug = await this.generateUniqueSlug(baseSlug);
 
-      // Only admin can create private services (validation should happen in controller)
-      const serviceData: Partial<Service> = {
-        title: data.title,
-        description: data.description,
-        slug,
-        tags: data.tags || [],
-        categoryId: new Types.ObjectId(data.categoryId),
-        coverImage: data.coverImage
-          ? new Types.ObjectId(data.coverImage)
-          : undefined,
-        providerId: data.providerId
-          ? new Types.ObjectId(data.providerId)
-          : undefined,
-        servicePricing: data.servicePricing
-          ? {
-              serviceBasePrice: data.servicePricing.serviceBasePrice,
-              includeTravelFee: data.servicePricing.includeTravelFee ?? false,
-              includeAdditionalFees:
-                data.servicePricing.includeAdditionalFees ?? false,
-              currency: data.servicePricing.currency || "GHS",
-              platformCommissionRate:
-                data.servicePricing.platformCommissionRate ?? 0.2,
-              providerEarnings: 0, // Will be calculated in pre-save hook
-            }
-          : undefined,
-        isPrivate: data.isPrivate ?? false,
-        submittedBy: data.submittedBy
-          ? new Types.ObjectId(data.submittedBy)
-          : undefined,
-        isActive: false, // Requires approval
-      };
+    // Only admin can create private services (validation should happen in controller)
+    const serviceData: Partial<Service> = {
+      title: data.title,
+      description: data.description,
+      slug,
+      tags: data.tags || [],
+      categoryId: new Types.ObjectId(data.categoryId),
+      coverImage: data.coverImage
+        ? new Types.ObjectId(data.coverImage)
+        : undefined,
+      providerId: data.providerId
+        ? [new Types.ObjectId(data.providerId)]  // Wrap in array
+        : [],  // Empty array instead of undefined
+      servicePricing: data.servicePricing
+        ? {
+            serviceBasePrice: data.servicePricing.serviceBasePrice,
+            includeTravelFee: data.servicePricing.includeTravelFee ?? false,
+            includeAdditionalFees:
+              data.servicePricing.includeAdditionalFees ?? false,
+            currency: data.servicePricing.currency || "GHS",
+            platformCommissionRate:
+              data.servicePricing.platformCommissionRate ?? 0.2,
+            providerEarnings: 0, // Will be calculated in pre-save hook
+          }
+        : undefined,
+      isPrivate: data.isPrivate ?? false,
+      submittedBy: data.submittedBy
+        ? new Types.ObjectId(data.submittedBy)
+        : undefined,
+      isActive: false, // Requires approval
+    };
 
-      const service = new ServiceModel(serviceData);
-      await service.save();
+    const service = new ServiceModel(serviceData);
+    await service.save();
 
-      // Link orphaned cover image if exists
-      const linkResult = await this.imageLinkingService.linkOrphanedImage(
-        "service",
-        service._id.toString(),
-        "service_cover",
-        "coverImage",
-        data.submittedBy
-      );
+    // Link orphaned cover image if exists
+    const linkResult = await this.imageLinkingService.linkOrphanedImage(
+      "service",
+      service._id.toString(),
+      "service_cover",
+      "coverImage",
+      data.submittedBy
+    );
 
-      if (linkResult.linked) {
-        const updatedService = await ServiceModel.findById(service._id).lean();
-        return updatedService!;
-      }
-
-      return service.toObject();
-    } catch (error) {
-      throw new Error(
-        `Failed to create service: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+    if (linkResult.linked) {
+      const updatedService = await ServiceModel.findById(service._id).lean();
+      return updatedService!;
     }
+
+    return service.toObject();
+  } catch (error) {
+    throw new Error(
+      `Failed to create service: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
   }
+}
 
   /**
    * Check if a service with the same title exists in the same category
@@ -378,34 +378,34 @@ class ServiceService {
     return this.queryServices(query, undefined, pagination, populationLevel);
   }
 
-  /**
-   * Get services by provider
-   */
-  async getServicesByProvider(
-    providerId: string,
-    options: {
-      includeInactive?: boolean;
-      pagination?: PaginationOptions;
-      populationLevel?: PopulationLevel;
-    } = {}
-  ): Promise<ServiceQueryResult> {
-    const {
-      includeInactive = false,
-      pagination,
-      populationLevel = PopulationLevel.MINIMAL,
-    } = options;
+/**
+ * Get services by provider
+ */
+async getServicesByProvider(
+  providerId: string,
+  options: {
+    includeInactive?: boolean;
+    pagination?: PaginationOptions;
+    populationLevel?: PopulationLevel;
+  } = {}
+): Promise<ServiceQueryResult> {
+  const {
+    includeInactive = false,
+    pagination,
+    populationLevel = PopulationLevel.MINIMAL,
+  } = options;
 
-    const query: Record<string, any> = {
-      providerId: new Types.ObjectId(providerId),
-      deletedAt: null,
-    };
+  const query: Record<string, any> = {
+    providerId: new Types.ObjectId(providerId),  // This will now match array elements
+    deletedAt: null,
+  };
 
-    if (!includeInactive) {
-      query.isActive = true;
-    }
-
-    return this.queryServices(query, undefined, pagination, populationLevel);
+  if (!includeInactive) {
+    query.isActive = true;
   }
+
+  return this.queryServices(query, undefined, pagination, populationLevel);
+}
 
   /**
    * Search services with full-text search

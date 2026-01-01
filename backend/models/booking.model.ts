@@ -7,6 +7,7 @@ import {
   BookingStatus,
   PaymentStatus,
 } from "../types/booking.types";
+import { UserRole } from "../types/base.types";
 
 /**
  * Coordinates Sub-Schema
@@ -203,7 +204,7 @@ const bookingSchema = new Schema<Booking, IBookingModel, BookingMethods>(
     },
     cancelledBy: {
       type: String,
-      enum: ["client", "provider"],
+      enum: [UserRole.CUSTOMER, UserRole.PROVIDER],
     },
     rejectionReason: {
       type: String,
@@ -328,7 +329,7 @@ bookingSchema.methods.complete = function (
 bookingSchema.methods.cancel = function (
   this: HydratedDocument<Booking, BookingMethods>,
   reason: string,
-  cancelledBy: "client" | "provider"
+  cancelledBy: UserRole.CUSTOMER | UserRole.PROVIDER
 ) {
   if (
     this.status === BookingStatus.COMPLETED ||

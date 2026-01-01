@@ -88,17 +88,19 @@ const serviceSchema = new Schema<Service, IServiceModel, ServiceMethods>(
     },
 
     // Provider-specific fields
-   providerId: {
+providerId: {
   type: [{
     type: Schema.Types.ObjectId,
     ref: "ProviderProfile",
   }],
-  required: true,
+  required: false,  // Change from true to false
+  default: [],      // Add default empty array
   validate: {
     validator: function(v: any[]) {
-      return v && v.length > 0 && v.every(id => id && id.toString().length === 24);
+      // Allow empty array OR valid ObjectIds
+      return !v || v.length === 0 || v.every(id => id && id.toString().length === 24);
     },
-    message: 'At least one valid provider ID is required'
+    message: 'Provider IDs must be valid ObjectIds'
   },
   index: true
 },

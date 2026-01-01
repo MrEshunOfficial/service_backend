@@ -12,7 +12,7 @@ export interface Service extends BaseEntity, SoftDeletable {
   coverImage?: Types.ObjectId;
 
   // Provider-specific fields (optional for system services)
-  providerId?: Types.ObjectId;
+ providerId: Types.ObjectId[];
 
   // Pricing and availability
   servicePricing?: {
