@@ -1,21 +1,24 @@
-// controllers/task.controller.ts
+// controllers/tasks/task.controller.ts - REFACTORED
 
 import { AdminTaskHandlers } from "./handlers/admin.task.handers";
 import { CustomerTaskHandlers } from "./handlers/customer.task.handler";
 import { ProviderTaskHandlers } from "./handlers/provider.task.handlers";
 
 /**
- * Task Controller
+ * Task Controller - REFACTORED
  *
- * Handles HTTP requests for task management endpoints.
+ * Handles HTTP requests for task and booking management endpoints.
  * Delegates to specialized handler classes for better organization.
+ * Updated to support Task (discovery) → Booking (execution) architecture.
  */
 export class TaskController {
   private customerHandler: typeof CustomerTaskHandlers;
   private providerHandler: typeof ProviderTaskHandlers;
   private adminHandler: typeof AdminTaskHandlers;
 
-  // Customer Task Operations
+  // =========================================================================
+  // CUSTOMER TASK OPERATIONS
+  // =========================================================================
   public createTask;
   public getMyTasks;
   public getTaskById;
@@ -25,27 +28,54 @@ export class TaskController {
   public deleteTask;
   public rematchTask;
 
-  // Provider Task Operations
+  // ✅ NEW: Customer Booking Operations
+  public getMyBookings;
+  public getBookingById;
+  public cancelBooking;
+  public getTaskWithBooking;
+  public getCustomerDashboard;
+  public getCustomerHistory;
+
+  // =========================================================================
+  // PROVIDER TASK OPERATIONS
+  // =========================================================================
   public getMatchedTasks;
   public getFloatingTasks;
-  public getActiveTasks;
   public expressInterest;
   public respondToRequest;
-  public startTask;
-  public completeTask;
   public providerCancelTask;
   public getTaskDetails;
 
-  // Admin Task Operations
+  // ✅ NEW: Provider Booking Operations (replaces startTask/completeTask)
+  public getActiveBookings;
+  public startBooking;
+  public completeBooking;
+  public providerCancelBooking;
+  public getBookingDetails;
+  public getProviderDashboard;
+
+  // =========================================================================
+  // ADMIN OPERATIONS
+  // =========================================================================
   public getAllTasks;
   public getTaskStatistics;
+
+  // ✅ NEW: Admin Booking Operations
+  public getAllBookings;
+  public getBookingStatistics;
+  public getPlatformStatistics;
+  public getFunnelAnalysis;
 
   constructor() {
     this.customerHandler = CustomerTaskHandlers;
     this.providerHandler = ProviderTaskHandlers;
     this.adminHandler = AdminTaskHandlers;
 
-    // Bind Customer handlers
+    // =====================================================================
+    // BIND CUSTOMER HANDLERS
+    // =====================================================================
+
+    // Task operations
     this.createTask = this.customerHandler.createTask.bind(
       this.customerHandler
     );
@@ -71,24 +101,41 @@ export class TaskController {
       this.customerHandler
     );
 
-    // Bind Provider handlers
+    // ✅ NEW: Booking operations
+    this.getMyBookings = this.customerHandler.getMyBookings.bind(
+      this.customerHandler
+    );
+    this.getBookingById = this.customerHandler.getBookingById.bind(
+      this.customerHandler
+    );
+    this.cancelBooking = this.customerHandler.cancelBooking.bind(
+      this.customerHandler
+    );
+    this.getTaskWithBooking = this.customerHandler.getTaskWithBooking.bind(
+      this.customerHandler
+    );
+    this.getCustomerDashboard = this.customerHandler.getDashboardMetrics.bind(
+      this.customerHandler
+    );
+    this.getCustomerHistory = this.customerHandler.getCustomerHistory.bind(
+      this.customerHandler
+    );
+
+    // =====================================================================
+    // BIND PROVIDER HANDLERS
+    // =====================================================================
+
+    // Task operations
     this.getMatchedTasks = this.providerHandler.getMatchedTasks.bind(
       this.providerHandler
     );
     this.getFloatingTasks = this.providerHandler.getFloatingTasks.bind(
       this.providerHandler
     );
-    this.getActiveTasks = this.providerHandler.getActiveTasks.bind(
-      this.providerHandler
-    );
     this.expressInterest = this.providerHandler.expressInterest.bind(
       this.providerHandler
     );
     this.respondToRequest = this.providerHandler.respondToRequest.bind(
-      this.providerHandler
-    );
-    this.startTask = this.providerHandler.startTask.bind(this.providerHandler);
-    this.completeTask = this.providerHandler.completeTask.bind(
       this.providerHandler
     );
     this.providerCancelTask = this.providerHandler.cancelTask.bind(
@@ -98,9 +145,47 @@ export class TaskController {
       this.providerHandler
     );
 
-    // Bind Admin handlers
+    // ✅ NEW: Booking operations (replaces old task operations)
+    this.getActiveBookings = this.providerHandler.getActiveBookings.bind(
+      this.providerHandler
+    );
+    this.startBooking = this.providerHandler.startBooking.bind(
+      this.providerHandler
+    );
+    this.completeBooking = this.providerHandler.completeBooking.bind(
+      this.providerHandler
+    );
+    this.providerCancelBooking = this.providerHandler.cancelBooking.bind(
+      this.providerHandler
+    );
+    this.getBookingDetails = this.providerHandler.getBookingDetails.bind(
+      this.providerHandler
+    );
+    this.getProviderDashboard = this.providerHandler.getDashboardMetrics.bind(
+      this.providerHandler
+    );
+
+    // =====================================================================
+    // BIND ADMIN HANDLERS
+    // =====================================================================
+
+    // Task operations
     this.getAllTasks = this.adminHandler.getAllTasks.bind(this.adminHandler);
     this.getTaskStatistics = this.adminHandler.getTaskStatistics.bind(
+      this.adminHandler
+    );
+
+    // ✅ NEW: Booking operations
+    this.getAllBookings = this.adminHandler.getAllBookings.bind(
+      this.adminHandler
+    );
+    this.getBookingStatistics = this.adminHandler.getBookingStatistics.bind(
+      this.adminHandler
+    );
+    this.getPlatformStatistics = this.adminHandler.getPlatformStatistics.bind(
+      this.adminHandler
+    );
+    this.getFunnelAnalysis = this.adminHandler.getFunnelAnalysis.bind(
       this.adminHandler
     );
   }
@@ -109,7 +194,10 @@ export class TaskController {
 // Create and export a singleton instance
 const taskController = new TaskController();
 
-// Export individual handlers for use in routes
+// =========================================================================
+// EXPORT INDIVIDUAL HANDLERS FOR USE IN ROUTES
+// =========================================================================
+
 export const {
   // Customer Task Operations
   createTask,
@@ -121,18 +209,37 @@ export const {
   deleteTask,
   rematchTask,
 
+  // ✅ NEW: Customer Booking Operations
+  getMyBookings,
+  getBookingById,
+  cancelBooking,
+  getTaskWithBooking,
+  getCustomerDashboard,
+  getCustomerHistory,
+
   // Provider Task Operations
   getMatchedTasks,
   getFloatingTasks,
-  getActiveTasks,
   expressInterest,
   respondToRequest,
-  startTask,
-  completeTask,
   providerCancelTask,
   getTaskDetails,
 
-  // Admin Task Operations
+  // ✅ NEW: Provider Booking Operations
+  getActiveBookings,
+  startBooking,
+  completeBooking,
+  providerCancelBooking,
+  getBookingDetails,
+  getProviderDashboard,
+
+  // Admin Operations
   getAllTasks,
   getTaskStatistics,
+
+  // ✅ NEW: Admin Booking Operations
+  getAllBookings,
+  getBookingStatistics,
+  getPlatformStatistics,
+  getFunnelAnalysis,
 } = taskController;

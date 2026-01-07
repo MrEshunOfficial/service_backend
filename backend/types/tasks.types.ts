@@ -1,317 +1,245 @@
-// types/task.types.ts
-import { Types, HydratedDocument, Model } from "mongoose";
-import {
-  BaseEntity,
-  SoftDeletable,
-  UserLocation,
-  UserRole,
-} from "./base.types";
+// types/tasks.types.ts - COMPLETE WITH API TYPES
+
+import { Types, Model, HydratedDocument } from "mongoose";
+import { UserLocation } from "./base.types";
 
 /**
  * Task Priority Levels
  */
 export enum TaskPriority {
-  LOW = "low",
-  MEDIUM = "medium",
-  HIGH = "high",
-  URGENT = "urgent",
+  LOW = "LOW",
+  MEDIUM = "MEDIUM",
+  HIGH = "HIGH",
+  URGENT = "URGENT",
 }
 
 /**
- * Task Status - Simplified workflow
+ * Task Status - DISCOVERY PHASE ONLY
  */
 export enum TaskStatus {
-  PENDING = "pending", // Just posted, system searching for matches
-  MATCHED = "matched", // Has matched providers - client can select
-  FLOATING = "floating", // No matches found - visible to all providers
-  REQUESTED = "requested", // Client selected and requested a provider
-  ACCEPTED = "accepted", // Provider accepted the request
-  IN_PROGRESS = "in_progress", // Work started
-  COMPLETED = "completed",
-  CANCELLED = "cancelled",
-  EXPIRED = "expired",
+  PENDING = "PENDING", // Just created, awaiting matching
+  MATCHED = "MATCHED", // Providers matched by system
+  FLOATING = "FLOATING", // Open to all providers
+  REQUESTED = "REQUESTED", // Customer selected a provider
+  ACCEPTED = "ACCEPTED", // Provider accepted (temp state before conversion)
+  CONVERTED = "CONVERTED", // ✅ NEW: Converted to booking
+  EXPIRED = "EXPIRED", // Task expired
+  CANCELLED = "CANCELLED", // Cancelled during discovery
 }
 
 /**
- * Task Schedule
+ * Provider Match Result
  */
-export interface TaskSchedule {
-  priority: TaskPriority;
-  preferredDate?: Date;
-  flexibleDates?: boolean; // Can the date be adjusted?
-  timeSlot?: {
-    start: string; // e.g., "09:00"
-    end: string; // e.g., "17:00"
-  };
-}
-
-/**
- * Main Task Interface
- */
-export interface Task extends BaseEntity, SoftDeletable {
-  // Basic Information
-  title: string;
-  description: string; // Detailed description of what they need
-  category?: Types.ObjectId; // Optional: helps narrow matching (e.g., "Home Services", "Repairs")
-  tags?: string[]; // Keywords like ["plumbing", "leak", "urgent"]
-
-  // Customer Information
-  customerId: Types.ObjectId;
-  customerLocation: UserLocation; // Where the service is needed
-
-  // Scheduling
-  schedule: TaskSchedule;
-
-  // Budget (optional - helps providers decide)
-  estimatedBudget?: {
-    min?: number;
-    max?: number;
-    currency: string; // 'GHS' or 'USD'
-  };
-
-  // Status & Flow
-  status: TaskStatus;
-  expiresAt?: Date; // Auto-expire after X days
-
-  // Matching Phase (MATCHED status)
-  matchedProviders?: {
-    providerId: Types.ObjectId;
-    matchScore: number; // 0-100 based on relevance
-    matchedServices: Types.ObjectId[]; // Which of their services matched
-    matchReasons: string[]; // e.g., ["Location match", "Service title match", "Tag match"]
-    distance?: number; // Distance in km from customer location
-  }[];
-
-  // Matching metadata
-  matchingAttemptedAt?: Date;
-  matchingCriteria?: {
-    useLocationOnly: boolean; // If true, matched all providers in location
-    searchTerms: string[]; // Keywords extracted from title/description
-    categoryMatch: boolean; // Did we use category for matching?
-  };
-
-  // Floating Phase (FLOATING status - no matches found)
-  interestedProviders?: {
-    providerId: Types.ObjectId;
-    expressedAt: Date;
-    message?: string;
-  }[];
-
-  // Request Phase (REQUESTED status)
-  requestedProvider?: {
-    providerId: Types.ObjectId;
-    requestedAt: Date;
-    clientMessage?: string;
-  };
-
-  // Acceptance Phase (ACCEPTED status onwards)
-  assignedProvider?: {
-    providerId: Types.ObjectId;
-    acceptedAt: Date;
-    providerMessage?: string;
-  };
-
-  // Completion
-  completedAt?: Date;
-  cancelledAt?: Date;
-  cancellationReason?: string;
-  cancelledBy?: UserRole.CUSTOMER | UserRole.PROVIDER;
-
-  // Metadata
-  viewCount: number;
-}
-
-/**
- * Provider Interest (for floating tasks)
- */
-export interface ProviderInterest {
+export interface ProviderMatchResult {
   providerId: Types.ObjectId;
-  expressedAt: Date;
-  message?: string;
+  matchScore: number;
+  matchedServices: Types.ObjectId[];
+  matchReasons: string[];
+  distance?: number;
+  scoreBreakdown?: {
+    titleScore: number;
+    descriptionScore: number;
+    tagScore: number;
+    categoryScore: number;
+    locationScore: number;
+  };
 }
 
 /**
  * Task Matching Configuration
- * Defines how the system matches tasks to providers
  */
 export interface TaskMatchingConfig {
-  // Location matching
-  maxDistanceKm?: number; // Max distance for location-based matching (default: 20km)
-  prioritizeNearby?: boolean; // Give higher scores to closer providers
-
-  // Intelligent matching weights (when using "intelligent" strategy)
-  weights?: {
-    titleMatch: number; // e.g., 30 - matching task title to service title
-    descriptionMatch: number; // e.g., 25 - matching description keywords
-    tagMatch: number; // e.g., 25 - matching tags
-    categoryMatch: number; // e.g., 15 - matching category
-    locationProximity: number; // e.g., 5 - distance factor
+  maxDistanceKm: number;
+  prioritizeNearby: boolean;
+  weights: {
+    titleMatch: number;
+    descriptionMatch: number;
+    tagMatch: number;
+    categoryMatch: number;
+    locationProximity: number;
   };
-
-  // Matching thresholds
-  minimumMatchScore?: number; // Minimum score to include provider (default: 40)
-  maxProvidersToReturn?: number; // Max number of matches to return (default: 20)
-
-  // Fallback behavior
-  fallbackToLocationOnly?: boolean; // If intelligent matching finds < X matches, use location-only
-  fallbackThreshold?: number; // Number of matches before fallback (default: 3)
+  minimumMatchScore: number;
+  maxProvidersToReturn: number;
+  fallbackToLocationOnly: boolean;
+  fallbackThreshold?: number;
 }
 
 /**
- * Matching result for a single provider
+ * Task Interface (Model)
  */
-export interface ProviderMatchResult {
-  providerId: Types.ObjectId;
-  matchScore: number; // 0-100
-  matchedServices: Types.ObjectId[]; // Which services matched
-  matchReasons: string[]; // Human-readable reasons
-  distance?: number; // Distance in km
-  scoreBreakdown?: {
-    titleScore: number;
-    descriptionScore: number;
-    tagScore: number;
-    categoryScore: number;
-    locationScore: number;
-  };
-}
-
-/**
- * Matching result for a single provider
- */
-export interface ProviderMatchResult {
-  providerId: Types.ObjectId;
-  matchScore: number; // 0-100
-  matchedServices: Types.ObjectId[]; // Which services matched
-  matchReasons: string[]; // Human-readable reasons
-  distance?: number; // Distance in km
-  scoreBreakdown?: {
-    titleScore: number;
-    descriptionScore: number;
-    tagScore: number;
-    categoryScore: number;
-    locationScore: number;
-  };
-}
-
-/**
- * Instance Methods Interface
- */
-export interface TaskMethods {
-  softDelete(deletedBy?: Types.ObjectId): Promise<this>;
-  restore(): Promise<this>;
-
-  // Matching workflow
-  findMatches(strategy?: "intelligent" | "location-only"): Promise<this>;
-  // - "intelligent": Match based on service descriptions, titles, tags, category
-  // - "location-only": Show all providers in customer's location
-  makeFloating(): Promise<this>; // Convert to floating if no matches
-
-  // Scoring helpers
-  calculateIntelligentMatchScore(
-    provider: any,
-    relevantServices: any[]
-  ): ProviderMatchResult;
-  calculateLocationMatchScore(provider: any): ProviderMatchResult;
-  buildMatchReasons(provider: any, services: any[], scores: any): string[];
-
-  // Provider interest (floating tasks only)
-  addProviderInterest(
-    providerId: Types.ObjectId,
-    message?: string
-  ): Promise<this>;
-  removeProviderInterest(providerId: Types.ObjectId): Promise<this>;
-
-  // Client requests provider
-  requestProvider(providerId: Types.ObjectId, message?: string): Promise<this>;
-
-  // Provider accepts request
-  acceptTask(providerId: Types.ObjectId, message?: string): Promise<this>;
-
-  // Provider rejects request
-  rejectTask(providerId: Types.ObjectId, reason?: string): Promise<this>;
-
-  // Task progression
-  startTask(): Promise<this>; // Mark as in progress
-  completeTask(): Promise<this>;
-  cancelTask(
-    reason?: string,
-    cancelledBy?: UserRole.CUSTOMER | UserRole.PROVIDER
-  ): Promise<this>;
-}
-
-/**
- * Virtuals Interface
- */
-export interface TaskVirtuals {
-  isExpired: boolean;
-  isActive: boolean;
-  hasMatches: boolean; // Has matched providers
-  isFloating: boolean; // No matches, open to all
-  isAssigned: boolean; // Has assigned provider
-  matchCount: number;
-  interestCount: number;
-  daysUntilExpiry: number;
-}
-
-/**
- * Static Methods Interface
- */
-export interface TaskModel extends Model<Task, {}, TaskMethods, TaskVirtuals> {
-  findActive(): Promise<TaskDocument[]>;
-  findByCustomer(customerId: string): Promise<TaskDocument[]>;
-  findByService(serviceId: string): Promise<TaskDocument[]>;
-
-  // For providers to see
-  findFloatingTasks(): Promise<TaskDocument[]>; // All floating tasks
-  findMatchedForProvider(providerId: string): Promise<TaskDocument[]>; // Tasks where they're matched
-  findByAssignedProvider(providerId: string): Promise<TaskDocument[]>; // Their active tasks
-
-  // Search & filter
-  searchTasks(
-    searchTerm: string,
-    filters?: {
-      status?: TaskStatus;
-      serviceId?: string;
-      location?: string;
-    }
-  ): Promise<TaskDocument[]>;
-}
-
-/**
- * Complete Task Document Type
- */
-export type TaskDocument = HydratedDocument<Task, TaskMethods & TaskVirtuals>;
-
-/**
- * Request Body: Create Task (Customer posts a task)
- */
-export interface CreateTaskRequestBody {
+export interface Task {
+  _id: Types.ObjectId;
   title: string;
-  description: string; // What they need done
-  category?: string; // Optional category to help matching
-  tags?: string[]; // Keywords
-  customerLocation: UserLocation; // Where service is needed
-  schedule: TaskSchedule;
+  description: string;
+  category?: Types.ObjectId;
+  tags?: string[];
+  customerId: Types.ObjectId;
+  customerLocation: UserLocation;
+  schedule: {
+    priority: TaskPriority;
+    preferredDate?: Date;
+    flexibleDates?: boolean;
+    timeSlot?: {
+      start: string;
+      end: string;
+    };
+  };
   estimatedBudget?: {
     min?: number;
     max?: number;
     currency: string;
   };
-  matchingStrategy?: "intelligent" | "location-only"; // How to find providers
+  status: TaskStatus;
+  expiresAt?: Date;
+  matchedProviders?: Array<{
+    providerId: Types.ObjectId;
+    matchScore: number;
+    matchedServices: Types.ObjectId[];
+    matchReasons: string[];
+    distance?: number;
+  }>;
+  matchingAttemptedAt?: Date;
+  matchingCriteria?: {
+    useLocationOnly: boolean;
+    searchTerms: string[];
+    categoryMatch: boolean;
+  };
+  interestedProviders?: Array<{
+    providerId: Types.ObjectId;
+    expressedAt: Date;
+    message?: string;
+  }>;
+  requestedProvider?: {
+    providerId: Types.ObjectId;
+    requestedAt: Date;
+    clientMessage?: string;
+  };
+  acceptedProvider?: {
+    providerId: Types.ObjectId;
+    acceptedAt: Date;
+    providerMessage?: string;
+  };
+  convertedToBookingId?: Types.ObjectId;
+  convertedAt?: Date;
+  cancelledAt?: Date;
+  cancellationReason?: string;
+  cancelledBy?: string;
+  viewCount: number;
+  isDeleted: boolean;
+  deletedAt?: Date;
+  deletedBy?: Types.ObjectId;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 /**
- * Request Body: Update Task
+ * Task Instance Methods
+ */
+export interface TaskMethods {
+  softDelete(
+    deletedBy?: Types.ObjectId
+  ): Promise<HydratedDocument<Task, TaskMethods>>;
+  restore(): Promise<HydratedDocument<Task, TaskMethods>>;
+  findMatches(
+    strategy?: "intelligent" | "location-only"
+  ): Promise<HydratedDocument<Task, TaskMethods>>;
+  calculateIntelligentMatchScore(
+    provider: any,
+    services: any[]
+  ): ProviderMatchResult;
+  calculateLocationMatchScore(provider: any): ProviderMatchResult;
+  buildMatchReasons(provider: any, services: any[], scores: any): string[];
+  makeFloating(): Promise<HydratedDocument<Task, TaskMethods>>;
+  addProviderInterest(
+    providerId: Types.ObjectId,
+    message?: string
+  ): Promise<HydratedDocument<Task, TaskMethods>>;
+  removeProviderInterest(
+    providerId: Types.ObjectId
+  ): Promise<HydratedDocument<Task, TaskMethods>>;
+  requestProvider(
+    providerId: Types.ObjectId,
+    message?: string
+  ): Promise<HydratedDocument<Task, TaskMethods>>;
+  acceptTask(providerId: Types.ObjectId, message?: string): Promise<any>;
+  rejectTask(
+    providerId: Types.ObjectId,
+    reason?: string
+  ): Promise<HydratedDocument<Task, TaskMethods>>;
+  cancelTask(
+    reason?: string,
+    cancelledBy?: string
+  ): Promise<HydratedDocument<Task, TaskMethods>>;
+}
+
+/**
+ * Task Static Methods
+ */
+export interface TaskModel extends Model<Task, {}, TaskMethods> {
+  findActive(): any;
+  findByCustomer(customerId: string): any;
+  findByService(serviceId: string): any;
+  findFloatingTasks(): any;
+  findMatchedForProvider(providerId: string): any;
+  findConverted(filters?: any): any;
+  searchTasks(searchTerm: string, filters?: any): any;
+}
+
+// ============================================================================
+// API REQUEST/RESPONSE TYPES (Service Layer)
+// ============================================================================
+
+/**
+ * Create Task Request Body
+ */
+export interface CreateTaskRequestBody {
+  title: string;
+  description: string;
+  category?: Types.ObjectId | string;
+  tags?: string[];
+  customerLocation: UserLocation;
+  schedule: {
+    priority: TaskPriority;
+    preferredDate?: Date;
+    flexibleDates?: boolean;
+    timeSlot?: {
+      start: string;
+      end: string;
+    };
+  };
+  estimatedBudget?: {
+    min?: number;
+    max?: number;
+    currency?: string;
+  };
+  matchingStrategy?: "intelligent" | "location-only";
+}
+
+/**
+ * Update Task Request Body
  */
 export interface UpdateTaskRequestBody {
   title?: string;
   description?: string;
   customerLocation?: UserLocation;
-  schedule?: TaskSchedule;
+  schedule?: Partial<{
+    priority: TaskPriority;
+    preferredDate?: Date;
+    flexibleDates?: boolean;
+    timeSlot?: {
+      start: string;
+      end: string;
+    };
+  }>;
+  estimatedBudget?: {
+    min?: number;
+    max?: number;
+    currency?: string;
+  };
 }
 
 /**
- * Request Body: Express Interest (Provider for floating task)
+ * Express Interest Request Body
  */
 export interface ExpressInterestRequestBody {
   taskId: string;
@@ -319,86 +247,65 @@ export interface ExpressInterestRequestBody {
 }
 
 /**
- * Request Body: Request Provider (Customer selects provider)
+ * Request Provider Request Body
  */
 export interface RequestProviderRequestBody {
   taskId: string;
-  providerId: string; // From matched list or interested providers
+  providerId: string;
   message?: string;
 }
 
 /**
- * Request Body: Accept/Reject Task (Provider response)
+ * Provider Response Request Body
  */
 export interface ProviderResponseRequestBody {
   taskId: string;
   action: "accept" | "reject";
-  message?: string; // Optional message to customer
+  message?: string;
 }
 
 /**
- * Response: Task with matched/interested providers
+ * Matching Summary
+ */
+export interface MatchingSummary {
+  strategy: "intelligent" | "location-only";
+  totalMatches: number;
+  averageMatchScore: number;
+  searchTermsUsed: string[];
+}
+
+/**
+ * Task Response (Single Task)
+ */
+export interface TaskResponse {
+  message: string;
+  task?: Task;
+  booking?: any; // Can include booking if task was accepted
+  error?: string;
+}
+
+/**
+ * Task List Response
+ */
+export interface TaskListResponse {
+  message: string;
+  tasks?: Task[] | Partial<Task>[]; // Allow partial tasks for lean queries
+  error?: string;
+}
+
+/**
+ * Task With Providers Response (Create/Rematch)
  */
 export interface TaskWithProvidersResponse {
   message: string;
-  task?: Partial<Task>;
-  matchedProviders?: {
+  task?: Task;
+  matchedProviders?: Array<{
     providerId: Types.ObjectId;
     matchScore: number;
     matchedServices: Types.ObjectId[];
     matchReasons: string[];
     distance?: number;
-  }[];
-  interestedProviders?: ProviderInterest[];
-  matchingSummary?: {
-    strategy: "intelligent" | "location-only";
-    totalMatches: number;
-    averageMatchScore?: number;
-    searchTermsUsed?: string[];
-  };
+  }>;
+  matchingSummary?: MatchingSummary;
   error?: string;
-}
-
-/**
- * Response: Standard Task Response
- */
-export interface TaskResponse {
-  message: string;
-  task?: Partial<Task>;
-  error?: string;
-}
-
-/**
- * Response: Task List
- */
-export interface TaskListResponse {
-  message: string;
-  tasks?: Partial<Task>[];
-  pagination?: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
-  error?: string;
-}
-
-/**
- * Notification payload for task updates
- */
-export interface TaskNotification {
-  taskId: Types.ObjectId;
-  recipientId: Types.ObjectId;
-  type:
-    | "task_matched" // Task found matches
-    | "task_floating" // Task has no matches
-    | "provider_interested" // Provider expressed interest
-    | "task_requested" // Customer requested you
-    | "task_accepted" // Provider accepted
-    | "task_rejected" // Provider rejected
-    | "task_started" // Work started
-    | "task_completed" // Task completed
-    | "task_cancelled"; // Task cancelled
-  message: string;
-  data?: Record<string, any>;
 }

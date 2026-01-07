@@ -1,177 +1,136 @@
-// types/booking.types.ts
+// types/booking.types.ts - FIXED
+
 import { Types, Model, HydratedDocument } from "mongoose";
-import { BaseEntity, SoftDeletable, UserLocation, UserRole } from "./base.types";
 
 /**
- * Booking Status
+ * Booking Status - EXECUTION PHASE ONLY
  */
 export enum BookingStatus {
-  PENDING = "pending", // Booking requested, awaiting provider confirmation
-  CONFIRMED = "confirmed", // Provider confirmed
-  IN_PROGRESS = "in_progress", // Service is being delivered
-  COMPLETED = "completed", // Service completed
-  CANCELLED = "cancelled", // Cancelled by either party
-  REJECTED = "rejected", // Provider rejected the booking
+  CONFIRMED = "CONFIRMED", // Created from accepted task
+  IN_PROGRESS = "IN_PROGRESS", // Service started
+  COMPLETED = "COMPLETED", // Service finished
+  CANCELLED = "CANCELLED", // Cancelled after booking
 }
 
 /**
  * Payment Status
  */
 export enum PaymentStatus {
-  PENDING = "pending",
-  PAID = "paid",
-  REFUNDED = "refunded",
-  FAILED = "failed",
+  PENDING = "PENDING",
+  DEPOSIT_PAID = "DEPOSIT_PAID",
+  PARTIALLY_PAID = "PARTIALLY_PAID",
+  PAID = "PAID",
+  REFUNDED = "REFUNDED",
+  FAILED = "FAILED",
 }
 
 /**
- * Main Booking Interface
+ * Status History Entry
  */
-export interface Booking extends BaseEntity, SoftDeletable {
-  // Unique identifier
-  bookingNumber: string; // e.g., "BK-20250101-001"
-
-  // Parties involved
-  clientId: Types.ObjectId; // Reference to ClientProfile
-  providerId: Types.ObjectId; // Reference to ProviderProfile
-  serviceId?: Types.ObjectId; // Optional: which service was booked
-
-  // Booking details
-  serviceLocation: UserLocation; // Where service will be delivered
-  scheduledDate: Date;
-  scheduledTimeSlot?: {
-    start: string; // e.g., "09:00"
-    end: string; // e.g., "11:00"
-  };
-
-  // Description & requirements
-  serviceDescription: string; // What the client needs
-  specialInstructions?: string;
-
-  // Pricing
-  estimatedPrice?: number;
-  finalPrice?: number;
-  currency: string; // 'GHS' or 'USD'
-
-  // Status tracking
+export interface StatusHistoryEntry {
   status: BookingStatus;
-  paymentStatus: PaymentStatus;
-
-  // Timestamps for workflow
-  confirmedAt?: Date;
-  startedAt?: Date;
-  completedAt?: Date;
-  cancelledAt?: Date;
-  rejectedAt?: Date;
-
-  // Cancellation/rejection
-  cancellationReason?: string;
-  cancelledBy?: UserRole.CUSTOMER | UserRole.PROVIDER
-  rejectionReason?: string;
-
-  // Provider response message
-  providerMessage?: string; // Message when confirming/rejecting
+  timestamp: Date;
+  actor?: Types.ObjectId;
+  actorRole?: string;
+  reason?: string;
+  message?: string;
 }
 
 /**
- * Instance Methods Interface
+ * Booking Interface - with virtual properties
  */
-export interface BookingMethods {
-  softDelete(deletedBy?: Types.ObjectId): Promise<this>;
-  restore(): Promise<this>;
-
-  // Status transitions
-  confirm(providerMessage?: string): Promise<this>;
-  reject(reason: string): Promise<this>;
-  startService(): Promise<this>;
-  complete(finalPrice?: number): Promise<this>;
-  cancel(reason: string, cancelledBy: UserRole.CUSTOMER | UserRole.PROVIDER): Promise<this>;
-}
-
-/**
- * Static Methods Interface
- */
-export interface BookingModel extends Model<Booking, {}, BookingMethods> {
-  findActive(): Promise<BookingDocument[]>;
-  findByClient(clientId: string): Promise<BookingDocument[]>;
-  findByProvider(providerId: string): Promise<BookingDocument[]>;
-  findByStatus(status: BookingStatus): Promise<BookingDocument[]>;
-  generateBookingNumber(): Promise<string>;
-}
-
-/**
- * Complete Booking Document Type
- */
-export type BookingDocument = HydratedDocument<Booking, BookingMethods>;
-
-/**
- * Request Body: Create Booking
- */
-export interface CreateBookingRequestBody {
-  providerId: string;
-  serviceId?: string;
-  serviceLocation: UserLocation;
+export interface Booking {
+  _id?: Types.ObjectId;
+  bookingNumber: string;
+  taskId: Types.ObjectId;
+  clientId: Types.ObjectId;
+  providerId: Types.ObjectId;
+  serviceId: Types.ObjectId;
+  serviceLocation: any; // UserLocation type
   scheduledDate: Date;
-  scheduledTimeSlot?: {
+  scheduledTimeSlot: {
     start: string;
     end: string;
   };
   serviceDescription: string;
   specialInstructions?: string;
   estimatedPrice?: number;
-  currency?: string;
+  finalPrice?: number;
+  depositAmount?: number;
+  depositPaid?: boolean;
+  currency: string;
+  status: BookingStatus;
+  paymentStatus: PaymentStatus;
+  statusHistory?: StatusHistoryEntry[];
+  isDeleted?: boolean;
+  deletedAt?: Date;
+  deletedBy?: Types.ObjectId;
+  createdAt?: Date;
+  updatedAt?: Date;
+
+  // ✅ Virtual properties (read-only)
+  readonly isActive?: boolean;
+  readonly isConfirmed?: boolean;
+  readonly isInProgress?: boolean;
+  readonly isCompleted?: boolean;
+  readonly isCancelled?: boolean;
+  readonly isUpcoming?: boolean;
+  readonly isPastDue?: boolean;
+  readonly confirmedAt?: Date;
+  readonly startedAt?: Date;
+  readonly completedAt?: Date;
+  readonly cancelledAt?: Date;
+  readonly cancellationReason?: string;
+  readonly cancelledBy?: string;
+  readonly providerMessage?: string;
+  readonly durationInDays?: number | null;
+  readonly requiresDeposit?: boolean;
+  readonly depositRemaining?: number;
+  readonly balanceRemaining?: number;
 }
 
 /**
- * Request Body: Update Booking
+ * Booking Instance Methods
  */
-export interface UpdateBookingRequestBody {
-  scheduledDate?: Date;
-  scheduledTimeSlot?: {
-    start: string;
-    end: string;
-  };
-  serviceDescription?: string;
-  specialInstructions?: string;
+export interface BookingMethods {
+  softDelete(
+    deletedBy?: Types.ObjectId
+  ): Promise<HydratedDocument<Booking, BookingMethods>>;
+  restore(): Promise<HydratedDocument<Booking, BookingMethods>>;
+  startService(
+    providerId?: Types.ObjectId
+  ): Promise<HydratedDocument<Booking, BookingMethods>>;
+  complete(
+    finalPrice?: number,
+    providerId?: Types.ObjectId
+  ): Promise<HydratedDocument<Booking, BookingMethods>>;
+  cancel(
+    reason: string,
+    cancelledBy: string,
+    actorId?: Types.ObjectId
+  ): Promise<HydratedDocument<Booking, BookingMethods>>;
+  updatePaymentStatus(
+    paymentStatus: PaymentStatus,
+    actorId?: Types.ObjectId
+  ): Promise<HydratedDocument<Booking, BookingMethods>>;
+  reschedule(
+    newDate: Date,
+    newTimeSlot?: { start: string; end: string },
+    actorId?: Types.ObjectId,
+    actorRole?: string
+  ): Promise<HydratedDocument<Booking, BookingMethods>>;
 }
 
 /**
- * Request Body: Provider Response
+ * Booking Static Methods
  */
-export interface ProviderBookingResponseBody {
-  bookingId: string;
-  action: "confirm" | "reject";
-  message?: string;
-}
-
-/**
- * Request Body: Cancel Booking
- */
-export interface CancelBookingRequestBody {
-  bookingId: string;
-  reason: string;
-}
-
-/**
- * Standard Booking Response
- */
-export interface BookingResponse {
-  message: string;
-  booking?: Partial<Booking>;
-  error?: string;
-}
-
-/**
- * Booking List Response
- */
-export interface BookingListResponse {
-  message: string;
-  bookings?: Partial<Booking>[];
-  pagination?: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
-  error?: string;
+export interface BookingModel extends Model<Booking, {}, BookingMethods> {
+  findActive(): any;
+  findByClient(clientId: string): any;
+  findByProvider(providerId: string): any;
+  findByStatus(status: BookingStatus): any;
+  findByTask(taskId: string): any;
+  findUpcoming(providerId?: string): any;
+  findByDateRange(startDate: Date, endDate: Date, providerId?: string): any;
+  generateBookingNumber(): Promise<string>;
 }

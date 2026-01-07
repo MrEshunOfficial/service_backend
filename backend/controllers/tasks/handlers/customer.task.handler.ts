@@ -1,8 +1,9 @@
-// handlers/customer-task.handlers.ts
+// handlers/customer-task.handlers.ts - REFACTORED
 
 import { Response } from "express";
 import { Types } from "mongoose";
 import { taskService } from "../../../services/tasks/task.service";
+import { TaskBookingService } from "../../../services/tasks/task-booking.service";
 import { UserRole } from "../../../types/base.types";
 import {
   CreateTaskRequestBody,
@@ -16,8 +17,9 @@ import {
 } from "../../../utils/controller-utils/controller.utils";
 
 /**
- * Customer Task Handlers
+ * Customer Task Handlers - REFACTORED
  * Handles all task operations from the customer's perspective
+ * Updated to work with Task (discovery) → Booking (execution) flow
  */
 export class CustomerTaskHandlers {
   /**
@@ -35,7 +37,6 @@ export class CustomerTaskHandlers {
         });
       }
 
-      // Validate request body
       const {
         title,
         description,
@@ -56,7 +57,6 @@ export class CustomerTaskHandlers {
         });
       }
 
-      // Validate schedule
       if (!schedule.priority) {
         return res.status(400).json({
           success: false,
@@ -64,7 +64,6 @@ export class CustomerTaskHandlers {
         });
       }
 
-      // Validate customer location
       if (!customerLocation.ghanaPostGPS) {
         return res.status(400).json({
           success: false,
@@ -72,15 +71,18 @@ export class CustomerTaskHandlers {
         });
       }
 
-      // Validate category if provided
-      if (category && !validateObjectId(category)) {
+      if (
+        category &&
+        !validateObjectId(
+          category instanceof Types.ObjectId ? category.toString() : category
+        )
+      ) {
         return res.status(400).json({
           success: false,
           message: "Invalid category ID",
         });
       }
 
-      // Create task
       const result = await taskService.createTask(
         new Types.ObjectId(customerId),
         {
@@ -118,7 +120,7 @@ export class CustomerTaskHandlers {
   }
 
   /**
-   * Get all tasks for the authenticated customer
+   * ✅ UPDATED: Get all tasks for the authenticated customer
    * GET /api/tasks/my-tasks
    */
   static async getMyTasks(req: AuthenticatedRequest, res: Response) {
@@ -132,12 +134,12 @@ export class CustomerTaskHandlers {
         });
       }
 
-      // Extract query parameters
-      const { status, includeDeleted } = req.query;
+      const { status, includeDeleted, includeConverted } = req.query;
 
       const result = await taskService.getCustomerTasks(customerId, {
         status: status as TaskStatus | undefined,
         includeDeleted: includeDeleted === "true",
+        includeConverted: includeConverted !== "false", // ✅ NEW: Default true
       });
 
       if (result.error) {
@@ -193,7 +195,6 @@ export class CustomerTaskHandlers {
         });
       }
 
-      // Verify ownership
       const taskCustomerId = result.task.customerId;
       if (taskCustomerId && taskCustomerId.toString() !== customerId) {
         return res.status(403).json({
@@ -239,7 +240,6 @@ export class CustomerTaskHandlers {
 
       const updateData = req.body as UpdateTaskRequestBody;
 
-      // Validate if at least one field is provided
       if (
         !updateData.title &&
         !updateData.description &&
@@ -347,7 +347,7 @@ export class CustomerTaskHandlers {
   }
 
   /**
-   * Cancel a task
+   * ✅ UPDATED: Cancel a task (only during discovery phase)
    * POST /api/tasks/:taskId/cancel
    */
   static async cancelTask(req: AuthenticatedRequest, res: Response) {
@@ -495,6 +495,250 @@ export class CustomerTaskHandlers {
       });
     } catch (error) {
       return handleError(res, error, "Failed to rematch task");
+    }
+  }
+
+  /**
+   * ✅ NEW: Get all bookings for the customer
+   * GET /api/bookings/my-bookings
+   */
+  static async getMyBookings(req: AuthenticatedRequest, res: Response) {
+    try {
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      const { BookingModel } = await import("../../../models/booking.model");
+
+      const bookings = await BookingModel.findByClient(customerId);
+
+      return res.status(200).json({
+        success: true,
+        message: "Bookings retrieved successfully",
+        data: {
+          bookings,
+          count: bookings.length,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve bookings");
+    }
+  }
+
+  /**
+   * ✅ NEW: Get booking details
+   * GET /api/bookings/:bookingId
+   */
+  static async getBookingById(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { bookingId } = req.params;
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(bookingId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid booking ID",
+        });
+      }
+
+      const booking = await TaskBookingService.getBookingWithTask(bookingId);
+
+      // Verify ownership
+      if (booking.clientId.toString() !== customerId) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: You don't have access to this booking",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Booking retrieved successfully",
+        data: {
+          booking,
+        },
+      });
+    } catch (error: any) {
+      return handleError(
+        res,
+        error,
+        error.message || "Failed to retrieve booking"
+      );
+    }
+  }
+
+  /**
+   * ✅ NEW: Cancel a booking (execution phase)
+   * POST /api/bookings/:bookingId/cancel
+   */
+  static async cancelBooking(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { bookingId } = req.params;
+      const customerId = req.userId;
+      const { reason } = req.body;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(bookingId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid booking ID",
+        });
+      }
+
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message: "Cancellation reason is required",
+        });
+      }
+
+      const booking = await TaskBookingService.cancelBooking(
+        bookingId,
+        reason,
+        UserRole.CUSTOMER,
+        customerId
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Booking cancelled successfully",
+        data: {
+          booking,
+        },
+      });
+    } catch (error: any) {
+      return handleError(
+        res,
+        error,
+        error.message || "Failed to cancel booking"
+      );
+    }
+  }
+
+  /**
+   * ✅ NEW: Get task with its booking (if converted)
+   * GET /api/tasks/:taskId/with-booking
+   */
+  static async getTaskWithBooking(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { taskId } = req.params;
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      if (!validateObjectId(taskId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid task ID",
+        });
+      }
+
+      const result = await taskService.getTaskWithBooking(taskId);
+
+      if (result.error) {
+        return res.status(404).json({
+          success: false,
+          message: result.message,
+        });
+      }
+
+      // Verify ownership
+      if (result.task.customerId.toString() !== customerId) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: You don't have access to this task",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          task: result.task,
+        },
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve task with booking");
+    }
+  }
+
+  /**
+   * ✅ NEW: Get customer dashboard metrics
+   * GET /api/tasks/customer/dashboard
+   */
+  static async getDashboardMetrics(req: AuthenticatedRequest, res: Response) {
+    try {
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      const metrics = await TaskBookingService.getDashboardMetrics(
+        customerId,
+        UserRole.CUSTOMER
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Dashboard metrics retrieved successfully",
+        data: metrics,
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve dashboard metrics");
+    }
+  }
+
+  /**
+   * ✅ NEW: Get customer history (tasks + bookings)
+   * GET /api/customer/history
+   */
+  static async getCustomerHistory(req: AuthenticatedRequest, res: Response) {
+    try {
+      const customerId = req.userId;
+
+      if (!customerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized: User not authenticated",
+        });
+      }
+
+      const history = await TaskBookingService.getCustomerHistory(customerId);
+
+      return res.status(200).json({
+        success: true,
+        message: "Customer history retrieved successfully",
+        data: history,
+      });
+    } catch (error) {
+      return handleError(res, error, "Failed to retrieve customer history");
     }
   }
 }

@@ -1,4 +1,4 @@
-// models/task.model.ts
+// models/task.model.ts - REFACTORED (Discovery Phase Only)
 
 import { Schema, HydratedDocument, model } from "mongoose";
 import {
@@ -9,9 +9,11 @@ import {
   TaskStatus,
   ProviderMatchResult,
 } from "../types/tasks.types";
-import { ProviderModel, userLocationSchema } from "./profiles/provider.model";
+import { ProviderModel } from "./profiles/provider.model";
 import { ServiceModel } from "./service.model";
 import { UserRole } from "../types/base.types";
+import { userLocationSchema } from "./shared-schemas/location.schema";
+import { timeSlotSchema } from "./shared-schemas/timeSlotSchema";
 
 /**
  * Task Schedule Sub-Schema
@@ -30,8 +32,7 @@ const taskScheduleSchema = new Schema(
       default: false,
     },
     timeSlot: {
-      start: { type: String, trim: true },
-      end: { type: String, trim: true },
+      type: timeSlotSchema,
     },
   },
   { _id: false }
@@ -46,6 +47,7 @@ const estimatedBudgetSchema = new Schema(
     max: { type: Number, min: 0 },
     currency: {
       type: String,
+      default: "GHS",
     },
   },
   { _id: false }
@@ -136,9 +138,9 @@ const requestedProviderSchema = new Schema(
 );
 
 /**
- * Assigned Provider Sub-Schema
+ * Accepted Provider Sub-Schema
  */
-const assignedProviderSchema = new Schema(
+const acceptedProviderSchema = new Schema(
   {
     providerId: {
       type: Schema.Types.ObjectId,
@@ -183,7 +185,7 @@ const matchingCriteriaSchema = new Schema(
 );
 
 /**
- * Main Task Schema
+ * Main Task Schema - DISCOVERY PHASE ONLY
  */
 const taskSchema = new Schema<Task, TaskModel, TaskMethods>(
   {
@@ -238,10 +240,21 @@ const taskSchema = new Schema<Task, TaskModel, TaskMethods>(
       type: estimatedBudgetSchema,
     },
 
-    // Status & Flow
+    // Status & Flow - DISCOVERY PHASE ONLY
     status: {
       type: String,
-      enum: Object.values(TaskStatus),
+      enum: [
+        TaskStatus.PENDING,
+        TaskStatus.MATCHED,
+        TaskStatus.FLOATING,
+        TaskStatus.REQUESTED,
+        TaskStatus.ACCEPTED,
+        TaskStatus.CONVERTED, // ✅ NEW: Task became a booking
+        TaskStatus.EXPIRED,
+        TaskStatus.CANCELLED,
+        // ❌ REMOVED: IN_PROGRESS (handled by Booking)
+        // ❌ REMOVED: COMPLETED (handled by Booking)
+      ],
       default: TaskStatus.PENDING,
       index: true,
     },
@@ -252,8 +265,6 @@ const taskSchema = new Schema<Task, TaskModel, TaskMethods>(
 
     // Matching Phase
     matchedProviders: [matchedProviderSchema],
-
-    // Matching metadata
     matchingAttemptedAt: {
       type: Date,
     },
@@ -266,12 +277,19 @@ const taskSchema = new Schema<Task, TaskModel, TaskMethods>(
     requestedProvider: requestedProviderSchema,
 
     // Acceptance Phase
-    assignedProvider: assignedProviderSchema,
+    acceptedProvider: acceptedProviderSchema,
 
-    // Completion
-    completedAt: {
+    // ✅ NEW: Booking Reference (when converted)
+    convertedToBookingId: {
+      type: Schema.Types.ObjectId,
+      ref: "Booking",
+      index: true,
+    },
+    convertedAt: {
       type: Date,
     },
+
+    // Cancellation (only during discovery phase)
     cancelledAt: {
       type: Date,
     },
@@ -333,19 +351,19 @@ taskSchema.index({ "customerLocation.region": 1 });
 taskSchema.index({ "matchedProviders.providerId": 1, status: 1 });
 taskSchema.index({ "interestedProviders.providerId": 1, status: 1 });
 taskSchema.index({ "requestedProvider.providerId": 1 });
-taskSchema.index({ "assignedProvider.providerId": 1 });
+taskSchema.index({ "acceptedProvider.providerId": 1 });
 taskSchema.index({ createdAt: -1, status: 1 });
 taskSchema.index({ category: 1, status: 1 });
+taskSchema.index({ convertedToBookingId: 1 });
 
 /**
  * Pre-save middleware
- * ✅ FIXED: Removed auto-matching to prevent parallel saves
  */
 taskSchema.pre("save", async function () {
   // Auto-set expiration if not set (default: 30 days)
   if (
     !this.expiresAt &&
-    this.status !== TaskStatus.COMPLETED &&
+    this.status !== TaskStatus.CONVERTED &&
     this.status !== TaskStatus.CANCELLED
   ) {
     const expiryDate = new Date();
@@ -368,8 +386,6 @@ taskSchema.pre("save", async function () {
       throw new Error("Minimum budget cannot be greater than maximum budget");
     }
   }
-
-  // ✅ REMOVED: Auto-matching moved to service layer to prevent parallel saves
 });
 
 /**
@@ -396,7 +412,6 @@ taskSchema.methods.restore = function (
 
 /**
  * Find Matches - Intelligent or Location-only matching
- * ✅ FIXED: Handles providerId as array, no text search dependency
  */
 taskSchema.methods.findMatches = async function (
   this: HydratedDocument<Task, TaskMethods>,
@@ -404,7 +419,6 @@ taskSchema.methods.findMatches = async function (
 ) {
   this.matchingAttemptedAt = new Date();
 
-  // Initialize matching criteria
   this.matchingCriteria = {
     useLocationOnly: strategy === "location-only",
     searchTerms: [],
@@ -414,7 +428,6 @@ taskSchema.methods.findMatches = async function (
   let matches: ProviderMatchResult[] = [];
 
   if (strategy === "intelligent") {
-    // Extract search terms from title and description
     const searchText = `${this.title} ${this.description}`.toLowerCase();
     const keywords = searchText
       .split(/\s+/)
@@ -424,27 +437,22 @@ taskSchema.methods.findMatches = async function (
     this.matchingCriteria.searchTerms = keywords;
 
     if (keywords.length > 0) {
-      // Build service query without text search dependency
       const serviceQuery: any = {
         isActive: true,
         deletedAt: null,
       };
 
-      // Build $or conditions
       const orConditions: any[] = [];
 
-      // Add tag matching
       if (this.tags && this.tags.length > 0) {
         orConditions.push({ tags: { $in: this.tags } });
       }
 
-      // Add category matching
       if (this.category) {
         orConditions.push({ categoryId: this.category });
         this.matchingCriteria.categoryMatch = true;
       }
 
-      // Add keyword matching using regex (fallback for text search)
       if (keywords.length > 0) {
         const keywordRegex = keywords.map((k) => new RegExp(k, "i"));
         orConditions.push(
@@ -454,26 +462,17 @@ taskSchema.methods.findMatches = async function (
         );
       }
 
-      // Only add $or if we have conditions
       if (orConditions.length > 0) {
         serviceQuery.$or = orConditions;
-      } else {
-        // If no conditions, just find active services
-        console.log("No search criteria, finding all active services");
       }
 
-      // ✅ DON'T populate providerId - keep them as ObjectIds
       const matchingServices = await ServiceModel.find(serviceQuery).lean();
 
-      // Group services by provider
       const servicesByProvider = new Map<string, any[]>();
 
-      // ✅ FIXED: Handle providerId as an array of ObjectIds
       for (const service of matchingServices) {
         if (service.providerId && Array.isArray(service.providerId)) {
-          // Loop through each provider ID in the array
           for (const pid of service.providerId) {
-            // Validate each provider ID (check for null/undefined and valid length)
             if (
               pid &&
               typeof pid === "object" &&
@@ -491,18 +490,14 @@ taskSchema.methods.findMatches = async function (
       }
 
       if (servicesByProvider.size > 0) {
-        // ✅ Filter out any invalid IDs before querying
         const validProviderIds = Array.from(servicesByProvider.keys()).filter(
           (id) => id && id.length === 24
         );
 
         if (validProviderIds.length === 0) {
-          console.log("No valid provider IDs found after filtering");
-          // Fallback to location-only
           strategy = "location-only";
           this.matchingCriteria.useLocationOnly = true;
         } else {
-          // Get providers in customer's location
           const providers = await ProviderModel.find({
             _id: { $in: validProviderIds },
             $or: [
@@ -513,7 +508,6 @@ taskSchema.methods.findMatches = async function (
             isDeleted: { $ne: true },
           }).lean();
 
-          // Calculate match scores
           matches = providers.map((provider: any) => {
             const relevantServices =
               servicesByProvider.get(provider._id.toString()) || [];
@@ -523,27 +517,21 @@ taskSchema.methods.findMatches = async function (
             );
           });
 
-          // Sort by match score
           matches.sort((a, b) => b.matchScore - a.matchScore);
-
-          // Filter out low scores
           matches = matches.filter((m) => m.matchScore >= 40);
         }
       } else {
-        console.log("No services matched, falling back to location-only");
         strategy = "location-only";
         this.matchingCriteria.useLocationOnly = true;
       }
     }
 
-    // Fallback to location-only if too few matches
     if (matches.length < 3) {
       strategy = "location-only";
       this.matchingCriteria.useLocationOnly = true;
     }
   }
 
-  // Location-only matching
   if (strategy === "location-only") {
     const providers = await ProviderModel.find({
       $or: [
@@ -558,11 +546,9 @@ taskSchema.methods.findMatches = async function (
       this.calculateLocationMatchScore(provider)
     );
 
-    // Sort by match score
     matches.sort((a, b) => b.matchScore - a.matchScore);
   }
 
-  // Update task with matches
   if (matches.length > 0) {
     this.matchedProviders = matches.slice(0, 20).map((m) => ({
       providerId: m.providerId,
@@ -596,13 +582,11 @@ taskSchema.methods.calculateIntelligentMatchScore = function (
     locationScore: 0,
   };
 
-  // Service relevance (40 points)
   if (relevantServices.length > 0) {
     scores.titleScore = 20;
     scores.descriptionScore = 20;
   }
 
-  // Tag matching (20 points)
   if (this.tags && this.tags.length > 0) {
     const serviceTags = relevantServices.flatMap((s) => s.tags || []);
     const matchingTags = this.tags.filter((tag: string) =>
@@ -611,7 +595,6 @@ taskSchema.methods.calculateIntelligentMatchScore = function (
     scores.tagScore = (matchingTags.length / this.tags.length) * 20;
   }
 
-  // Category match (15 points)
   if (
     this.category &&
     relevantServices.some(
@@ -621,7 +604,6 @@ taskSchema.methods.calculateIntelligentMatchScore = function (
     scores.categoryScore = 15;
   }
 
-  // Location proximity (25 points)
   if (provider.locationData?.locality === this.customerLocation.locality) {
     scores.locationScore = 25;
   } else if (provider.locationData?.city === this.customerLocation.city) {
@@ -668,7 +650,6 @@ taskSchema.methods.calculateLocationMatchScore = function (
     locationScore: 0,
   };
 
-  // Location match (100 points distributed)
   if (provider.locationData?.locality === this.customerLocation.locality) {
     scores.locationScore = 100;
   } else if (provider.locationData?.city === this.customerLocation.city) {
@@ -805,7 +786,6 @@ taskSchema.methods.requestProvider = function (
   providerId: any,
   message?: string
 ) {
-  // Check if provider is in matched list or interested list
   const isMatched = this.matchedProviders?.some(
     (mp) => mp.providerId.toString() === providerId.toString()
   );
@@ -829,9 +809,10 @@ taskSchema.methods.requestProvider = function (
 };
 
 /**
- * Accept Task (Provider accepts the request)
+ * ✅ FIXED: Accept Task - Creates Booking
+ * This is the handoff point from Task (discovery) to Booking (execution)
  */
-taskSchema.methods.acceptTask = function (
+taskSchema.methods.acceptTask = async function (
   this: HydratedDocument<Task, TaskMethods>,
   providerId: any,
   message?: string
@@ -840,14 +821,71 @@ taskSchema.methods.acceptTask = function (
     throw new Error("Only the requested provider can accept this task");
   }
 
-  this.assignedProvider = {
+  // Import BookingModel and types here to avoid circular dependency
+  const { BookingModel } = await import("./booking.model");
+  const { BookingStatus, PaymentStatus } = await import(
+    "../types/booking.types"
+  );
+
+  // Determine the service to use
+  const matchedProvider = this.matchedProviders?.find(
+    (mp) => mp.providerId.toString() === providerId.toString()
+  );
+
+  const serviceId =
+    matchedProvider?.matchedServices?.[0] ||
+    this.matchedProviders?.[0]?.matchedServices?.[0];
+
+  if (!serviceId) {
+    throw new Error("No service found for this provider");
+  }
+
+  // ✅ Generate booking number first
+  const bookingNumber = await BookingModel.generateBookingNumber();
+
+  // ✅ Create booking with proper typing
+  const booking = await BookingModel.create({
+    bookingNumber,
+    taskId: this._id,
+    clientId: this.customerId,
+    providerId: providerId,
+    serviceId: serviceId,
+    serviceLocation: this.customerLocation,
+    scheduledDate: this.schedule.preferredDate || new Date(),
+    scheduledTimeSlot: this.schedule.timeSlot || {
+      start: "09:00",
+      end: "17:00",
+    },
+    serviceDescription: this.description,
+    specialInstructions: message,
+    estimatedPrice: this.estimatedBudget?.max || this.estimatedBudget?.min,
+    currency: this.estimatedBudget?.currency || "GHS",
+    status: BookingStatus.CONFIRMED, // ✅ Use enum value
+    paymentStatus: PaymentStatus.PENDING, // ✅ Use enum value
+    statusHistory: [
+      {
+        status: BookingStatus.CONFIRMED, // ✅ Use enum value
+        timestamp: new Date(),
+        actor: providerId,
+        actorRole: "PROVIDER",
+        message: message,
+      },
+    ],
+  });
+
+  // ✅ Update task to CONVERTED status
+  this.status = TaskStatus.CONVERTED;
+  this.acceptedProvider = {
     providerId,
     acceptedAt: new Date(),
     providerMessage: message,
   };
-  this.status = TaskStatus.ACCEPTED;
+  this.convertedToBookingId = booking._id;
+  this.convertedAt = new Date();
 
-  return this.save();
+  await this.save();
+
+  return booking;
 };
 
 /**
@@ -862,7 +900,6 @@ taskSchema.methods.rejectTask = function (
     throw new Error("Only the requested provider can reject this task");
   }
 
-  // Move back to previous status
   if (this.matchedProviders && this.matchedProviders.length > 0) {
     this.status = TaskStatus.MATCHED;
   } else if (this.interestedProviders && this.interestedProviders.length > 0) {
@@ -878,38 +915,25 @@ taskSchema.methods.rejectTask = function (
 };
 
 /**
- * Start Task
+ * ❌ REMOVED: startTask() - handled by Booking
+ * ❌ REMOVED: completeTask() - handled by Booking
  */
-taskSchema.methods.startTask = function (
-  this: HydratedDocument<Task, TaskMethods>
-) {
-  if (this.status !== TaskStatus.ACCEPTED) {
-    throw new Error("Task must be accepted before starting");
-  }
-
-  this.status = TaskStatus.IN_PROGRESS;
-  return this.save();
-};
 
 /**
- * Complete Task
- */
-taskSchema.methods.completeTask = function (
-  this: HydratedDocument<Task, TaskMethods>
-) {
-  this.status = TaskStatus.COMPLETED;
-  this.completedAt = new Date();
-  return this.save();
-};
-
-/**
- * Cancel Task
+ * Cancel Task (Only during discovery phase)
  */
 taskSchema.methods.cancelTask = function (
   this: HydratedDocument<Task, TaskMethods>,
   reason?: string,
-  cancelledBy?: UserRole.CUSTOMER | UserRole.PROVIDER
+  cancelledBy?: string
 ) {
+  // Can only cancel if not yet converted to booking
+  if (this.status === TaskStatus.CONVERTED) {
+    throw new Error(
+      "Cannot cancel task after conversion. Cancel the booking instead."
+    );
+  }
+
   this.status = TaskStatus.CANCELLED;
   this.cancelledAt = new Date();
   this.cancellationReason = reason;
@@ -924,7 +948,7 @@ taskSchema.statics.findActive = function () {
   return this.find({
     isDeleted: { $ne: true },
     status: {
-      $nin: [TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.EXPIRED],
+      $nin: [TaskStatus.CONVERTED, TaskStatus.CANCELLED, TaskStatus.EXPIRED],
     },
   })
     .populate("customerId", "name email")
@@ -941,7 +965,7 @@ taskSchema.statics.findActive = function () {
       "businessName locationData profile"
     )
     .populate(
-      "assignedProvider.providerId",
+      "acceptedProvider.providerId",
       "businessName locationData profile"
     )
     .sort({ createdAt: -1 });
@@ -965,9 +989,10 @@ taskSchema.statics.findByCustomer = function (customerId: string) {
       "businessName locationData profile"
     )
     .populate(
-      "assignedProvider.providerId",
+      "acceptedProvider.providerId",
       "businessName locationData profile"
     )
+    .populate("convertedToBookingId")
     .sort({ createdAt: -1 });
 };
 
@@ -1005,14 +1030,26 @@ taskSchema.statics.findMatchedForProvider = function (providerId: string) {
     .sort({ createdAt: -1 });
 };
 
-taskSchema.statics.findByAssignedProvider = function (providerId: string) {
-  return this.find({
-    "assignedProvider.providerId": providerId,
-    status: { $in: [TaskStatus.ACCEPTED, TaskStatus.IN_PROGRESS] },
+// ✅ NEW: Find tasks that were converted to bookings
+taskSchema.statics.findConverted = function (filters?: any) {
+  const query: any = {
+    status: TaskStatus.CONVERTED,
     isDeleted: { $ne: true },
-  })
+  };
+
+  if (filters?.customerId) {
+    query.customerId = filters.customerId;
+  }
+
+  if (filters?.providerId) {
+    query["acceptedProvider.providerId"] = filters.providerId;
+  }
+
+  return this.find(query)
     .populate("customerId", "name email")
-    .sort({ createdAt: -1 });
+    .populate("acceptedProvider.providerId", "businessName locationData")
+    .populate("convertedToBookingId")
+    .sort({ convertedAt: -1 });
 };
 
 taskSchema.statics.searchTasks = function (searchTerm: string, filters?: any) {
@@ -1052,7 +1089,7 @@ taskSchema.virtual("isExpired").get(function () {
 
 taskSchema.virtual("isActive").get(function () {
   return (
-    ![TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.EXPIRED].includes(
+    ![TaskStatus.CONVERTED, TaskStatus.CANCELLED, TaskStatus.EXPIRED].includes(
       this.status
     ) &&
     !this.isDeleted &&
@@ -1068,8 +1105,8 @@ taskSchema.virtual("isFloating").get(function () {
   return this.status === TaskStatus.FLOATING;
 });
 
-taskSchema.virtual("isAssigned").get(function () {
-  return !!this.assignedProvider;
+taskSchema.virtual("isConverted").get(function () {
+  return this.status === TaskStatus.CONVERTED;
 });
 
 taskSchema.virtual("matchCount").get(function () {

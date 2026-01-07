@@ -1,4 +1,4 @@
-// services/task.service.ts
+// services/task.service.ts - REFACTORED (Discovery Phase Only)
 
 import { Types } from "mongoose";
 import TaskModelInstance from "../../models/task.model";
@@ -15,6 +15,7 @@ import {
   ProviderResponseRequestBody,
 } from "../../types/tasks.types";
 import { taskMatchingService } from "./provider-matching.service";
+import { TaskBookingService } from "./task-booking.service";
 
 export class TaskService {
   /**
@@ -116,9 +117,10 @@ export class TaskService {
           "businessName locationData profile"
         )
         .populate(
-          "assignedProvider.providerId",
+          "acceptedProvider.providerId",
           "businessName locationData profile"
-        );
+        )
+        .populate("convertedToBookingId"); // ✅ NEW: Populate booking if converted
 
       if (!task || task.isDeleted) {
         return {
@@ -146,6 +148,7 @@ export class TaskService {
     filters?: {
       status?: TaskStatus;
       includeDeleted?: boolean;
+      includeConverted?: boolean; // ✅ NEW: Option to include/exclude converted tasks
     }
   ): Promise<TaskListResponse> {
     try {
@@ -156,6 +159,11 @@ export class TaskService {
 
       if (filters?.status) {
         query.status = filters.status;
+      }
+
+      // ✅ NEW: Option to exclude converted tasks (default: include)
+      if (filters?.includeConverted === false) {
+        query.status = { ...query.status, $ne: TaskStatus.CONVERTED };
       }
 
       const tasks = await TaskModelInstance.find(query)
@@ -172,9 +180,10 @@ export class TaskService {
           "businessName locationData profile"
         )
         .populate(
-          "assignedProvider.providerId",
+          "acceptedProvider.providerId",
           "businessName locationData profile"
         )
+        .populate("convertedToBookingId") // ✅ NEW: Populate booking reference
         .sort({ createdAt: -1 });
 
       return {
@@ -244,34 +253,52 @@ export class TaskService {
   }
 
   /**
-   * Get active tasks for a provider (tasks they're working on)
+   * ✅ NEW: Get converted tasks (tasks that became bookings)
    */
-  async getActiveTasksForProvider(
-    providerId: string
+  async getConvertedTasks(
+    customerId?: string,
+    providerId?: string
   ): Promise<TaskListResponse> {
     try {
-      const tasks = await TaskModelInstance.find({
-        "assignedProvider.providerId": providerId,
-        status: { $in: [TaskStatus.ACCEPTED, TaskStatus.IN_PROGRESS] },
-        isDeleted: { $ne: true },
-      })
-        .populate("customerId", "name email")
-        .sort({ createdAt: -1 });
+      const filters: any = {};
+      if (customerId) filters.customerId = customerId;
+      if (providerId) filters.providerId = providerId;
+
+      const tasks = await TaskModelInstance.findConverted(filters);
 
       return {
-        message: "Active tasks retrieved successfully",
-        tasks: tasks.map((t) => t.toObject()),
+        message: "Converted tasks retrieved successfully",
+        tasks: tasks.map((t: any) => t.toObject()),
       };
     } catch (error: any) {
       return {
-        message: "Failed to retrieve active tasks",
+        message: "Failed to retrieve converted tasks",
         error: error.message,
       };
     }
   }
 
   /**
-   * Update a task (only before it's accepted)
+   * ✅ NEW: Get task with its booking (if converted)
+   */
+  async getTaskWithBooking(taskId: string): Promise<any> {
+    try {
+      const result = await TaskBookingService.getTaskWithBooking(taskId);
+
+      return {
+        message: "Task with booking retrieved successfully",
+        task: result,
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve task with booking",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Update a task (only before it's requested or converted)
    */
   async updateTask(
     taskId: string,
@@ -293,11 +320,11 @@ export class TaskService {
         };
       }
 
-      // Can only update tasks that haven't been accepted yet
+      // ✅ UPDATED: Can only update tasks in discovery phase
       if (
+        task.status === TaskStatus.REQUESTED ||
         task.status === TaskStatus.ACCEPTED ||
-        task.status === TaskStatus.IN_PROGRESS ||
-        task.status === TaskStatus.COMPLETED
+        task.status === TaskStatus.CONVERTED
       ) {
         return {
           message: "Cannot update task in current status",
@@ -462,7 +489,8 @@ export class TaskService {
   }
 
   /**
-   * Provider responds to a request (accept or reject)
+   * ✅ REFACTORED: Provider responds to a request (accept or reject)
+   * Accept now creates a Booking via TaskBookingService
    */
   async respondToRequest(
     data: ProviderResponseRequestBody,
@@ -478,23 +506,20 @@ export class TaskService {
       }
 
       if (data.action === "accept") {
-        await task.acceptTask(new Types.ObjectId(providerId), data.message);
-
-        await task.populate([
-          { path: "customerId", select: "name email" },
-          {
-            path: "assignedProvider.providerId",
-            select: "businessName locationData profile",
-          },
-        ]);
-
-        // TODO: Send notification to customer
+        // ✅ NEW: Use TaskBookingService to create booking
+        const result = await TaskBookingService.acceptTaskAndCreateBooking(
+          data.taskId,
+          providerId,
+          data.message
+        );
 
         return {
-          message: "Task accepted successfully",
-          task: task.toObject(),
+          message: "Task accepted and booking created successfully",
+          task: result.task.toObject(),
+          booking: result.booking.toObject(), // ✅ Return booking info
         };
       } else {
+        // Rejection stays in task service
         await task.rejectTask(new Types.ObjectId(providerId), data.message);
 
         await task.populate([
@@ -525,96 +550,12 @@ export class TaskService {
   }
 
   /**
-   * Start working on an accepted task
+   * ❌ REMOVED: startTask() - Now handled by booking.startService()
+   * ❌ REMOVED: completeTask() - Now handled by booking.complete()
    */
-  async startTask(taskId: string, providerId: string): Promise<TaskResponse> {
-    try {
-      const task = await TaskModelInstance.findById(taskId);
-
-      if (!task || task.isDeleted) {
-        return {
-          message: "Task not found",
-        };
-      }
-
-      if (task.assignedProvider?.providerId.toString() !== providerId) {
-        return {
-          message: "Only the assigned provider can start this task",
-        };
-      }
-
-      await task.startTask();
-
-      await task.populate([
-        { path: "customerId", select: "name email" },
-        {
-          path: "assignedProvider.providerId",
-          select: "businessName locationData profile",
-        },
-      ]);
-
-      // TODO: Send notification to customer
-
-      return {
-        message: "Task started successfully",
-        task: task.toObject(),
-      };
-    } catch (error: any) {
-      return {
-        message: "Failed to start task",
-        error: error.message,
-      };
-    }
-  }
 
   /**
-   * Complete a task
-   */
-  async completeTask(
-    taskId: string,
-    providerId: string
-  ): Promise<TaskResponse> {
-    try {
-      const task = await TaskModelInstance.findById(taskId);
-
-      if (!task || task.isDeleted) {
-        return {
-          message: "Task not found",
-        };
-      }
-
-      if (task.assignedProvider?.providerId.toString() !== providerId) {
-        return {
-          message: "Only the assigned provider can complete this task",
-        };
-      }
-
-      await task.completeTask();
-
-      await task.populate([
-        { path: "customerId", select: "name email" },
-        {
-          path: "assignedProvider.providerId",
-          select: "businessName locationData profile",
-        },
-      ]);
-
-      // TODO: Send notification to customer and trigger review flow
-
-      return {
-        message: "Task completed successfully",
-        task: task.toObject(),
-      };
-    } catch (error: any) {
-      return {
-        message: "Failed to complete task",
-        error: error.message,
-      };
-    }
-  }
-
-  /**
-   * Cancel a task
+   * ✅ UPDATED: Cancel a task (only during discovery phase)
    */
   async cancelTask(
     taskId: string,
@@ -631,6 +572,14 @@ export class TaskService {
         };
       }
 
+      // ✅ NEW: Prevent cancellation after conversion
+      if (task.status === TaskStatus.CONVERTED) {
+        return {
+          message:
+            "Cannot cancel task after conversion to booking. Cancel the booking instead.",
+        };
+      }
+
       // Verify authorization
       if (userRole === UserRole.CUSTOMER) {
         if (task.customerId.toString() !== userId) {
@@ -639,9 +588,9 @@ export class TaskService {
           };
         }
       } else if (userRole === UserRole.PROVIDER) {
-        if (task.assignedProvider?.providerId.toString() !== userId) {
+        if (task.requestedProvider?.providerId.toString() !== userId) {
           return {
-            message: "Only the assigned provider can cancel this task",
+            message: "Only the requested provider can cancel this task",
           };
         }
       }
@@ -651,7 +600,7 @@ export class TaskService {
       await task.populate([
         { path: "customerId", select: "name email" },
         {
-          path: "assignedProvider.providerId",
+          path: "requestedProvider.providerId",
           select: "businessName locationData profile",
         },
       ]);
@@ -689,10 +638,10 @@ export class TaskService {
         };
       }
 
-      // Can only delete tasks that haven't been accepted yet
+      // ✅ UPDATED: Can only delete tasks in discovery phase
       if (
         task.status === TaskStatus.ACCEPTED ||
-        task.status === TaskStatus.IN_PROGRESS
+        task.status === TaskStatus.CONVERTED
       ) {
         return {
           message:
@@ -736,7 +685,7 @@ export class TaskService {
         };
       }
 
-      // Can only rematch pending, matched, or floating tasks
+      // ✅ UPDATED: Can only rematch tasks in discovery phase
       if (
         ![TaskStatus.PENDING, TaskStatus.MATCHED, TaskStatus.FLOATING].includes(
           task.status
