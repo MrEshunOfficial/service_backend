@@ -439,12 +439,10 @@ router.delete(
 /**
  * PATCH /api/clients/:clientId/preferred-categories
  * Update preferred categories
- * Admin only (for managing other users)
  */
 router.patch(
   "/:clientId/preferred-categories",
   authenticateToken,
-  requireAdmin,
   updatePreferredCategories
 );
 

@@ -14,6 +14,7 @@ import ProfileModel from "../../../../models/profiles/userProfile.model";
 /**
  * Provider ID Images Upload Handler (Cloudinary)
  * Handles uploading identification documents to Cloudinary
+ * Automatically finds provider profile from authenticated user
  */
 export class ProviderIdImagesUploadHandler {
   private cloudinaryService: CloudinaryFileService;
@@ -40,6 +41,32 @@ export class ProviderIdImagesUploadHandler {
       _id: new Types.ObjectId(providerId),
       isDeleted: false,
     });
+  }
+
+  /**
+   * Find provider profile for the authenticated user
+   */
+  private async findProviderByUserId(
+    userId: string
+  ): Promise<{ provider: any; providerId: string } | null> {
+    const userProfile = await ProfileModel.findOne({
+      userId: new Types.ObjectId(userId),
+      isDeleted: false,
+    });
+
+    if (!userProfile) return null;
+
+    const provider = await ProviderModel.findOne({
+      profile: userProfile._id,
+      isDeleted: false,
+    });
+
+    if (!provider) return null;
+
+    return {
+      provider,
+      providerId: provider._id.toString(),
+    };
   }
 
   private async linkIdImages(
@@ -69,6 +96,8 @@ export class ProviderIdImagesUploadHandler {
 
   /**
    * Upload single ID image
+   * Uses authenticated user's ID, not providerId
+   * Allows upload BEFORE provider profile creation
    */
   uploadSingle = async (
     req: AuthenticatedRequest,
@@ -80,20 +109,12 @@ export class ProviderIdImagesUploadHandler {
         return;
       }
 
-      const { providerId } = req.params;
       const userId = req.userId;
 
       if (!userId) {
         res
           .status(401)
           .json({ success: false, message: "User not authenticated" });
-        return;
-      }
-
-      if (!validateObjectId(providerId)) {
-        res
-          .status(400)
-          .json({ success: false, message: "Invalid provider ID" });
         return;
       }
 
@@ -120,42 +141,42 @@ export class ProviderIdImagesUploadHandler {
         return;
       }
 
-      // Check if provider exists
-      const provider = await this.findProvider(providerId);
+      // Check if provider profile exists for this user
+      const providerInfo = await this.findProviderByUserId(userId);
+      const providerId = providerInfo?.providerId || userId;
+      const provider = providerInfo?.provider;
 
-      // Check max files limit
-      const existingFiles = await this.mongoService.getFilesByEntity(
-        this.CONFIG.entityType,
-        providerId,
-        { status: "active" }
-      );
+      // Check max files limit if provider exists
+      if (providerInfo) {
+        const existingFiles = await this.mongoService.getFilesByEntity(
+          this.CONFIG.entityType,
+          providerId,
+          { status: "active" }
+        );
 
-      const existingIdImages = existingFiles.filter(
-        (f) => f.label === this.CONFIG.label
-      );
+        const existingIdImages = existingFiles.filter(
+          (f) => f.label === this.CONFIG.label
+        );
 
-      if (existingIdImages.length >= this.CONFIG.maxFiles) {
-        res.status(400).json({
-          success: false,
-          message: `Maximum ${this.CONFIG.maxFiles} ID images allowed per provider`,
-        });
-        return;
+        if (existingIdImages.length >= this.CONFIG.maxFiles) {
+          res.status(400).json({
+            success: false,
+            message: `Maximum ${this.CONFIG.maxFiles} ID images allowed per provider`,
+          });
+          return;
+        }
       }
 
-      // Upload to Cloudinary
+      // Upload to Cloudinary - use userId in folder path
       const resourceType = file.mimetype.startsWith("image/") ? "image" : "raw";
       const uploadResult = await this.cloudinaryService.uploadFile(
         file.buffer,
         file.originalname,
         {
-          folderName: `${this.CONFIG.folderPrefix}/${providerId}/${this.CONFIG.label}`,
+          folderName: `${this.CONFIG.folderPrefix}/${userId}/${this.CONFIG.label}`,
           isPublic: false, // ID documents should be private
           resourceType,
-          tags: [
-            this.CONFIG.entityType,
-            this.CONFIG.label,
-            providerId.toString(),
-          ],
+          tags: [this.CONFIG.entityType, this.CONFIG.label, userId.toString()],
           description: `Provider ID document`,
           entityType: this.CONFIG.entityType,
           entityId: crypto.randomUUID(),
@@ -181,23 +202,19 @@ export class ProviderIdImagesUploadHandler {
           width: uploadResult.width,
           height: uploadResult.height,
         },
-        tags: [
-          this.CONFIG.entityType,
-          this.CONFIG.label,
-          providerId.toString(),
-        ],
+        tags: [this.CONFIG.entityType, this.CONFIG.label, userId.toString()],
         description: `Provider ID document`,
         entityType: this.CONFIG.entityType,
-        entityId: new Types.ObjectId(providerId),
+        entityId: new Types.ObjectId(providerId), // Use providerId if exists, else userId
         label: this.CONFIG.label,
         status: "active",
       });
 
       // Auto-link to provider if provider exists
       let linkedToProvider = false;
-      if (provider && provider.IdDetails) {
+      if (provider && provider.IdDetails && providerInfo) {
         try {
-          const linkResult = await this.linkIdImages(providerId, [
+          const linkResult = await this.linkIdImages(providerInfo.providerId, [
             fileRecord._id,
           ]);
           linkedToProvider = linkResult.linked;
@@ -213,7 +230,7 @@ export class ProviderIdImagesUploadHandler {
         ? "ID image uploaded and linked successfully"
         : provider && !provider.IdDetails
         ? "ID image uploaded. Please initialize IdDetails with ID type and number first."
-        : "ID image uploaded. It will be linked when the provider profile is created.";
+        : "ID image uploaded. It will be automatically linked when you create your provider profile.";
 
       res.status(200).json({
         success: true,
@@ -233,6 +250,8 @@ export class ProviderIdImagesUploadHandler {
 
   /**
    * Upload multiple ID images at once
+   * Uses authenticated user's ID, not providerId
+   * Allows upload BEFORE provider profile creation
    */
   uploadMultiple = async (
     req: AuthenticatedRequest,
@@ -244,7 +263,6 @@ export class ProviderIdImagesUploadHandler {
         return;
       }
 
-      const { providerId } = req.params;
       const userId = req.userId;
 
       if (!userId) {
@@ -254,35 +272,33 @@ export class ProviderIdImagesUploadHandler {
         return;
       }
 
-      if (!validateObjectId(providerId)) {
-        res
-          .status(400)
-          .json({ success: false, message: "Invalid provider ID" });
-        return;
-      }
-
       const files = req.files as Express.Multer.File[];
 
-      // Check max files limit
-      const existingFiles = await this.mongoService.getFilesByEntity(
-        this.CONFIG.entityType,
-        providerId,
-        { status: "active" }
-      );
+      // Check if provider profile exists for this user
+      const providerInfo = await this.findProviderByUserId(userId);
+      const providerId = providerInfo?.providerId || userId;
+      const provider = providerInfo?.provider;
 
-      const existingIdImages = existingFiles.filter(
-        (f) => f.label === this.CONFIG.label
-      );
+      // Check max files limit if provider exists
+      if (providerInfo) {
+        const existingFiles = await this.mongoService.getFilesByEntity(
+          this.CONFIG.entityType,
+          providerId,
+          { status: "active" }
+        );
 
-      if (existingIdImages.length + files.length > this.CONFIG.maxFiles) {
-        res.status(400).json({
-          success: false,
-          message: `Maximum ${this.CONFIG.maxFiles} ID images allowed. You currently have ${existingIdImages.length}.`,
-        });
-        return;
+        const existingIdImages = existingFiles.filter(
+          (f) => f.label === this.CONFIG.label
+        );
+
+        if (existingIdImages.length + files.length > this.CONFIG.maxFiles) {
+          res.status(400).json({
+            success: false,
+            message: `Maximum ${this.CONFIG.maxFiles} ID images allowed. You currently have ${existingIdImages.length}.`,
+          });
+          return;
+        }
       }
-
-      const provider = await this.findProvider(providerId);
 
       // Upload all files
       const uploadResults = [];
@@ -311,7 +327,7 @@ export class ProviderIdImagesUploadHandler {
             continue;
           }
 
-          // Upload to Cloudinary
+          // Upload to Cloudinary - use userId in folder path
           const resourceType = file.mimetype.startsWith("image/")
             ? "image"
             : "raw";
@@ -319,13 +335,13 @@ export class ProviderIdImagesUploadHandler {
             file.buffer,
             file.originalname,
             {
-              folderName: `${this.CONFIG.folderPrefix}/${providerId}/${this.CONFIG.label}`,
+              folderName: `${this.CONFIG.folderPrefix}/${userId}/${this.CONFIG.label}`,
               isPublic: false,
               resourceType,
               tags: [
                 this.CONFIG.entityType,
                 this.CONFIG.label,
-                providerId.toString(),
+                userId.toString(),
               ],
               description: `Provider ID document`,
               entityType: this.CONFIG.entityType,
@@ -355,11 +371,11 @@ export class ProviderIdImagesUploadHandler {
             tags: [
               this.CONFIG.entityType,
               this.CONFIG.label,
-              providerId.toString(),
+              userId.toString(),
             ],
             description: `Provider ID document`,
             entityType: this.CONFIG.entityType,
-            entityId: new Types.ObjectId(providerId),
+            entityId: new Types.ObjectId(providerId), // Use providerId if exists, else userId
             label: this.CONFIG.label,
             status: "active",
           });
@@ -380,11 +396,19 @@ export class ProviderIdImagesUploadHandler {
         }
       }
 
-      // Link all successfully uploaded files to provider
+      // Link all successfully uploaded files to provider if it exists
       let linkedToProvider = false;
-      if (provider && provider.IdDetails && fileIds.length > 0) {
+      if (
+        provider &&
+        provider.IdDetails &&
+        fileIds.length > 0 &&
+        providerInfo
+      ) {
         try {
-          const linkResult = await this.linkIdImages(providerId, fileIds);
+          const linkResult = await this.linkIdImages(
+            providerInfo.providerId,
+            fileIds
+          );
           linkedToProvider = linkResult.linked;
         } catch (linkError) {
           console.warn(
@@ -397,11 +421,17 @@ export class ProviderIdImagesUploadHandler {
       const successCount = uploadResults.filter((r) => r.success).length;
       const failCount = uploadResults.filter((r) => !r.success).length;
 
+      const responseMessage = linkedToProvider
+        ? `${successCount} ID image(s) uploaded and linked successfully${
+            failCount > 0 ? `, ${failCount} failed` : ""
+          }`
+        : `${successCount} ID image(s) uploaded successfully${
+            failCount > 0 ? `, ${failCount} failed` : ""
+          }. They will be automatically linked when you create your provider profile.`;
+
       res.status(200).json({
         success: successCount > 0,
-        message: `${successCount} file(s) uploaded successfully${
-          failCount > 0 ? `, ${failCount} failed` : ""
-        }`,
+        message: responseMessage,
         data: {
           uploadResults,
           linkedToProvider,
@@ -417,6 +447,7 @@ export class ProviderIdImagesUploadHandler {
 
   /**
    * Delete ID image from Cloudinary and database
+   * Uses providerId from params for deletion (after profile exists)
    */
   delete = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
@@ -509,6 +540,32 @@ export class ProviderGalleryImagesUploadHandler {
     });
   }
 
+  /**
+   * Find provider profile for the authenticated user
+   */
+  private async findProviderByUserId(
+    userId: string
+  ): Promise<{ provider: any; providerId: string } | null> {
+    const userProfile = await ProfileModel.findOne({
+      userId: new Types.ObjectId(userId),
+      isDeleted: false,
+    });
+
+    if (!userProfile) return null;
+
+    const provider = await ProviderModel.findOne({
+      profile: userProfile._id,
+      isDeleted: false,
+    });
+
+    if (!provider) return null;
+
+    return {
+      provider,
+      providerId: provider._id.toString(),
+    };
+  }
+
   private async linkGalleryImages(
     providerId: string,
     fileIds: Types.ObjectId[]
@@ -531,6 +588,8 @@ export class ProviderGalleryImagesUploadHandler {
 
   /**
    * Upload single gallery image
+   * Uses authenticated user's ID, not providerId
+   * Allows upload BEFORE provider profile creation
    */
   uploadSingle = async (
     req: AuthenticatedRequest,
@@ -542,20 +601,12 @@ export class ProviderGalleryImagesUploadHandler {
         return;
       }
 
-      const { providerId } = req.params;
       const userId = req.userId;
 
       if (!userId) {
         res
           .status(401)
           .json({ success: false, message: "User not authenticated" });
-        return;
-      }
-
-      if (!validateObjectId(providerId)) {
-        res
-          .status(400)
-          .json({ success: false, message: "Invalid provider ID" });
         return;
       }
 
@@ -581,41 +632,41 @@ export class ProviderGalleryImagesUploadHandler {
         return;
       }
 
-      // Check if provider exists
-      const provider = await this.findProvider(providerId);
+      // Check if provider profile exists for this user
+      const providerInfo = await this.findProviderByUserId(userId);
+      const providerId = providerInfo?.providerId || userId;
+      const provider = providerInfo?.provider;
 
-      // Check max files limit
-      const existingFiles = await this.mongoService.getFilesByEntity(
-        this.CONFIG.entityType,
-        providerId,
-        { status: "active" }
-      );
+      // Check max files limit if provider exists
+      if (providerInfo) {
+        const existingFiles = await this.mongoService.getFilesByEntity(
+          this.CONFIG.entityType,
+          providerId,
+          { status: "active" }
+        );
 
-      const existingGalleryImages = existingFiles.filter(
-        (f) => f.label === this.CONFIG.label
-      );
+        const existingGalleryImages = existingFiles.filter(
+          (f) => f.label === this.CONFIG.label
+        );
 
-      if (existingGalleryImages.length >= this.CONFIG.maxFiles) {
-        res.status(400).json({
-          success: false,
-          message: `Maximum ${this.CONFIG.maxFiles} gallery images allowed per provider`,
-        });
-        return;
+        if (existingGalleryImages.length >= this.CONFIG.maxFiles) {
+          res.status(400).json({
+            success: false,
+            message: `Maximum ${this.CONFIG.maxFiles} gallery images allowed per provider`,
+          });
+          return;
+        }
       }
 
-      // Upload to Cloudinary
+      // Upload to Cloudinary - use userId in folder path
       const uploadResult = await this.cloudinaryService.uploadFile(
         file.buffer,
         file.originalname,
         {
-          folderName: `${this.CONFIG.folderPrefix}/${providerId}/${this.CONFIG.label}`,
+          folderName: `${this.CONFIG.folderPrefix}/${userId}/${this.CONFIG.label}`,
           isPublic: true, // Gallery images are public
           resourceType: "image",
-          tags: [
-            this.CONFIG.entityType,
-            this.CONFIG.label,
-            providerId.toString(),
-          ],
+          tags: [this.CONFIG.entityType, this.CONFIG.label, userId.toString()],
           description: `Provider business gallery image`,
           entityType: this.CONFIG.entityType,
           entityId: crypto.randomUUID(),
@@ -641,25 +692,22 @@ export class ProviderGalleryImagesUploadHandler {
           width: uploadResult.width,
           height: uploadResult.height,
         },
-        tags: [
-          this.CONFIG.entityType,
-          this.CONFIG.label,
-          providerId.toString(),
-        ],
+        tags: [this.CONFIG.entityType, this.CONFIG.label, userId.toString()],
         description: `Provider business gallery image`,
         entityType: this.CONFIG.entityType,
-        entityId: new Types.ObjectId(providerId),
+        entityId: new Types.ObjectId(providerId), // Use providerId if exists, else userId
         label: this.CONFIG.label,
         status: "active",
       });
 
       // Auto-link to provider if provider exists
       let linkedToProvider = false;
-      if (provider) {
+      if (provider && providerInfo) {
         try {
-          const linkResult = await this.linkGalleryImages(providerId, [
-            fileRecord._id,
-          ]);
+          const linkResult = await this.linkGalleryImages(
+            providerInfo.providerId,
+            [fileRecord._id]
+          );
           linkedToProvider = linkResult.linked;
         } catch (linkError) {
           console.warn(
@@ -671,7 +719,7 @@ export class ProviderGalleryImagesUploadHandler {
 
       const responseMessage = linkedToProvider
         ? "Gallery image uploaded and linked successfully"
-        : "Gallery image uploaded. It will be linked when the provider profile is created.";
+        : "Gallery image uploaded. It will be automatically linked when you create your provider profile.";
 
       res.status(200).json({
         success: true,
@@ -691,9 +739,6 @@ export class ProviderGalleryImagesUploadHandler {
     }
   };
 
-  /**
-   * Upload multiple gallery images at once
-   */
   /**
    * Upload multiple gallery images at once
    * Uses authenticated user's ID, not providerId
@@ -721,27 +766,12 @@ export class ProviderGalleryImagesUploadHandler {
       const files = req.files as Express.Multer.File[];
 
       // Check if provider profile exists for this user
-      const userProfile = await ProfileModel.findOne({
-        userId: new Types.ObjectId(userId),
-        isDeleted: false,
-      });
-
-      let providerId: string | null = null;
-      let provider = null;
-
-      if (userProfile) {
-        provider = await ProviderModel.findOne({
-          profile: userProfile._id,
-          isDeleted: false,
-        });
-
-        if (provider) {
-          providerId = provider._id.toString();
-        }
-      }
+      const providerInfo = await this.findProviderByUserId(userId);
+      const providerId = providerInfo?.providerId || userId;
+      const provider = providerInfo?.provider;
 
       // Check max files limit if provider exists
-      if (providerId) {
+      if (providerInfo) {
         const existingFiles = await this.mongoService.getFilesByEntity(
           this.CONFIG.entityType,
           providerId,
@@ -835,7 +865,7 @@ export class ProviderGalleryImagesUploadHandler {
             ],
             description: `Provider business gallery image`,
             entityType: this.CONFIG.entityType,
-            entityId: new Types.ObjectId(providerId || userId), // Use providerId if exists, else userId
+            entityId: new Types.ObjectId(providerId), // Use providerId if exists, else userId
             label: this.CONFIG.label,
             status: "active",
           });
@@ -859,9 +889,12 @@ export class ProviderGalleryImagesUploadHandler {
 
       // Link all successfully uploaded files to provider if it exists
       let linkedToProvider = false;
-      if (provider && fileIds.length > 0 && providerId) {
+      if (provider && fileIds.length > 0 && providerInfo) {
         try {
-          const linkResult = await this.linkGalleryImages(providerId, fileIds);
+          const linkResult = await this.linkGalleryImages(
+            providerInfo.providerId,
+            fileIds
+          );
           linkedToProvider = linkResult.linked;
         } catch (linkError) {
           console.warn(

@@ -155,17 +155,13 @@ export const signup = handleAsync(
       return;
 
     const user = await authService.signup({ name, email, password });
-    
+
     // Generate token with all user flags
-    const token = generateTokenAndSetCookie(
-      res, 
-      user._id.toString(),
-      {
-        isEmailVerified: user.isEmailVerified,
-        isAdmin: user.isAdmin,
-        isSuperAdmin: user.isSuperAdmin,
-      }
-    );
+    const token = generateTokenAndSetCookie(res, user._id.toString(), {
+      isEmailVerified: user.isEmailVerified,
+      isAdmin: user.isAdmin,
+      isSuperAdmin: user.isSuperAdmin,
+    });
 
     sendSuccessResponse(res, 201, "User created successfully", {
       user: getUserResponse(user),
@@ -184,17 +180,13 @@ export const login = handleAsync(
     if (!validateRequired({ email, password }, res)) return;
 
     const user = await authService.login({ email, password });
-    
+
     // Generate token with all user flags
-    const token = generateTokenAndSetCookie(
-      res, 
-      user._id.toString(),
-      {
-        isEmailVerified: user.isEmailVerified,
-        isAdmin: user.isAdmin,
-        isSuperAdmin: user.isSuperAdmin,
-      }
-    );
+    const token = generateTokenAndSetCookie(res, user._id.toString(), {
+      isEmailVerified: user.isEmailVerified,
+      isAdmin: user.isAdmin,
+      isSuperAdmin: user.isSuperAdmin,
+    });
 
     sendSuccessResponse(res, 200, "Login successful", {
       user: getUserResponse(user),
@@ -263,7 +255,11 @@ export const forgotPassword = handleAsync(
 
     if (!validateRequired({ email }, res)) return;
 
-    await authService.forgotPassword({ email });
+    const result = await authService.forgotPassword({ email });
+
+    // Log the generated token for development
+    console.log("Password Reset Token Generated:", result);
+    console.log("For email:", email);
 
     sendSuccessResponse(
       res,
@@ -279,6 +275,10 @@ export const resetPassword = handleAsync(
     res: Response<AuthResponse>
   ) => {
     const { token, password } = req.body;
+
+    // Log the token for development
+    console.log("Reset Token:", token);
+    console.log("New Password:", password);
 
     if (
       !validateRequired({ token, password }, res) ||
@@ -314,17 +314,13 @@ export const refreshToken = handleAsync(
   async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.userId;
     const user = await authService.refreshToken(userId!);
-    
+
     // Generate token with all user flags
-    const token = generateTokenAndSetCookie(
-      res, 
-      user._id.toString(),
-      {
-        isEmailVerified: user.isEmailVerified,
-        isAdmin: user.isAdmin,
-        isSuperAdmin: user.isSuperAdmin,
-      }
-    );
+    const token = generateTokenAndSetCookie(res, user._id.toString(), {
+      isEmailVerified: user.isEmailVerified,
+      isAdmin: user.isAdmin,
+      isSuperAdmin: user.isSuperAdmin,
+    });
 
     sendSuccessResponse(res, 200, "Token refreshed successfully", {
       user: getUserResponse(user),
@@ -395,8 +391,8 @@ export const updateUserRole = handleAsync(
     const { systemRole } = req.body;
 
     // Validate userId
-    if (!userId || userId === 'undefined') {
-      return sendErrorResponse(res, 400, 'Valid user ID is required');
+    if (!userId || userId === "undefined") {
+      return sendErrorResponse(res, 400, "Valid user ID is required");
     }
 
     if (!validateRequired({ systemRole }, res)) return;
@@ -452,7 +448,7 @@ export const verifyUser = handleAsync(
   async (req: AuthenticatedRequest, res: Response) => {
     // If authenticateToken middleware passes, user exists
     // The middleware already checked if user exists in DB
-    
+
     if (!req.user) {
       return sendErrorResponse(res, 401, "User not found");
     }
@@ -467,8 +463,7 @@ export const verifyUser = handleAsync(
         isEmailVerified: req.user.isEmailVerified,
         isAdmin: req.user.isAdmin,
         isSuperAdmin: req.user.isSuperAdmin,
-      }
+      },
     });
   }
 );
-
