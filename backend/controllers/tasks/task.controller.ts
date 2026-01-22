@@ -41,6 +41,7 @@ export class TaskController {
   // =========================================================================
   public getMatchedTasks;
   public getFloatingTasks;
+   public getRequestedTasks;
   public expressInterest;
   public respondToRequest;
   public providerCancelTask;
@@ -144,6 +145,9 @@ export class TaskController {
     this.getTaskDetails = this.providerHandler.getTaskDetails.bind(
       this.providerHandler
     );
+     this.getRequestedTasks = this.providerHandler.getRequestedTasks.bind(
+      this.providerHandler
+    );
 
     // ✅ NEW: Booking operations (replaces old task operations)
     this.getActiveBookings = this.providerHandler.getActiveBookings.bind(
@@ -220,6 +224,7 @@ export const {
   // Provider Task Operations
   getMatchedTasks,
   getFloatingTasks,
+  getRequestedTasks,
   expressInterest,
   respondToRequest,
   providerCancelTask,

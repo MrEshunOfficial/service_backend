@@ -1,9 +1,11 @@
-// services/task-booking.service.ts - REFACTORED
+// services/task-booking.service.ts - FIXED
 // Handles the conversion from Task (discovery) to Booking (execution)
 
 import { Types } from "mongoose";
 import { BookingModel } from "../../models/booking.model";
 import TaskModelInstance from "../../models/task.model";
+import { ProviderModel } from "../../models/profiles/provider.model";
+import { ServiceModel } from "../../models/service.model";
 import { UserRole } from "../../types/base.types";
 import { BookingStatus, PaymentStatus } from "../../types/booking.types";
 import { TaskStatus } from "../../types/tasks.types";
@@ -18,14 +20,21 @@ export class TaskBookingService {
     providerId: string | Types.ObjectId,
     providerMessage?: string
   ) {
-    // Find the task
+    console.log("=== ACCEPT TASK AND CREATE BOOKING ===");
+    console.log("Task ID:", taskId);
+    console.log("Provider ID:", providerId);
+
+    // Find the task with populated data
     const task = await TaskModelInstance.findById(taskId)
       .populate("customerId")
+      .populate("matchedProviders.providerId")
       .populate("matchedProviders.matchedServices");
 
     if (!task) {
       throw new Error("Task not found");
     }
+    console.log("✅ Task found");
+    console.log("Task Status:", task.status);
 
     // Validate task status
     if (task.status !== TaskStatus.REQUESTED) {
@@ -35,6 +44,10 @@ export class TaskBookingService {
     }
 
     // Validate provider is the requested one
+    console.log("Comparing provider IDs:");
+    console.log("  Requested:", task.requestedProvider?.providerId.toString());
+    console.log("  Current:", providerId.toString());
+
     if (
       task.requestedProvider?.providerId.toString() !== providerId.toString()
     ) {
@@ -46,20 +59,100 @@ export class TaskBookingService {
       throw new Error("Task has expired");
     }
 
-    // Find the matching service
+    // ✅ FIX 1: Find service with multiple fallback strategies
+    let serviceId: Types.ObjectId | null = null;
+
+    // Strategy 1: Check matched services from matching algorithm
+    console.log("Finding provider services...");
     const matchedProvider = task.matchedProviders?.find(
       (mp) => mp.providerId.toString() === providerId.toString()
     );
 
-    const serviceId = matchedProvider?.matchedServices?.[0];
+    if (matchedProvider?.matchedServices && matchedProvider.matchedServices.length > 0) {
+      serviceId = matchedProvider.matchedServices[0] as Types.ObjectId;
+      console.log("✅ Found service from matched services:", serviceId);
+    }
+
+    // Strategy 2: If no matched service, find ANY active service from provider
     if (!serviceId) {
-      throw new Error("No service found for this provider");
+      console.log("No matched services found, searching provider's active services...");
+      
+      const providerProfile = await ProviderModel.findById(providerId)
+        .populate('serviceOfferings');
+      
+      if (providerProfile?.serviceOfferings && providerProfile.serviceOfferings.length > 0) {
+        // Get the first active service
+        const firstService = providerProfile.serviceOfferings[0];
+        serviceId = firstService._id as Types.ObjectId;
+        console.log("✅ Found service from provider offerings:", serviceId);
+      }
+    }
+
+    // Strategy 3: Search Service collection directly
+    if (!serviceId) {
+      console.log("No services in provider profile, searching Service collection...");
+      
+      const providerService = await ServiceModel.findOne({
+        providerId: providerId,
+        isActive: true,
+        deletedAt: null,
+      });
+
+      if (providerService) {
+        serviceId = providerService._id as Types.ObjectId;
+        console.log("✅ Found service from Service collection:", serviceId);
+      }
+    }
+
+    // Strategy 4: Use task category to find a relevant service
+    if (!serviceId && task.category) {
+      console.log("Trying to find service by task category...");
+      
+      const categoryService = await ServiceModel.findOne({
+        providerId: providerId,
+        categoryId: task.category,
+        isActive: true,
+        deletedAt: null,
+      });
+
+      if (categoryService) {
+        serviceId = categoryService._id as Types.ObjectId;
+        console.log("✅ Found service by category:", serviceId);
+      }
+    }
+
+    // Final check
+    if (!serviceId) {
+      console.log("❌ No service found for provider");
+      throw new Error(
+        "No service found for this provider. The provider must have at least one active service to accept tasks."
+      );
     }
 
     // Generate booking number
     const bookingNumber = await BookingModel.generateBookingNumber();
+    console.log("✅ Generated booking number:", bookingNumber);
 
-    // ✅ FIXED: Create the booking with proper enum values
+    // ✅ FIX 2: Ensure proper time slot with validation
+    let timeSlot = task.schedule.timeSlot;
+    if (!timeSlot || !timeSlot.start || !timeSlot.end) {
+      console.log("⚠️ No valid time slot, using default business hours");
+      timeSlot = {
+        start: "09:00",
+        end: "17:00",
+      };
+    }
+
+    // ✅ FIX 3: Ensure valid scheduled date
+    let scheduledDate = task.schedule.preferredDate;
+    if (!scheduledDate || scheduledDate < new Date()) {
+      console.log("⚠️ No valid scheduled date, using tomorrow");
+      scheduledDate = new Date();
+      scheduledDate.setDate(scheduledDate.getDate() + 1);
+      scheduledDate.setHours(9, 0, 0, 0);
+    }
+
+    // ✅ Create the booking with proper enum values and validation
     const booking = await BookingModel.create({
       bookingNumber,
       taskId: task._id,
@@ -67,32 +160,31 @@ export class TaskBookingService {
       providerId: providerId,
       serviceId: serviceId,
       serviceLocation: task.customerLocation,
-      scheduledDate: task.schedule.preferredDate || new Date(),
-      scheduledTimeSlot: task.schedule.timeSlot || {
-        start: "09:00",
-        end: "17:00",
-      },
+      scheduledDate: scheduledDate,
+      scheduledTimeSlot: timeSlot,
       serviceDescription: task.description,
       specialInstructions: providerMessage,
       estimatedPrice: task.estimatedBudget?.max || task.estimatedBudget?.min,
       currency: task.estimatedBudget?.currency || "GHS",
-      status: BookingStatus.CONFIRMED, // ✅ Use enum
-      paymentStatus: PaymentStatus.PENDING, // ✅ Use enum
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PENDING,
       statusHistory: [
         {
-          status: BookingStatus.CONFIRMED, // ✅ Use enum
+          status: BookingStatus.CONFIRMED,
           timestamp: new Date(),
-          actor: providerId as Types.ObjectId,
-          actorRole: UserRole.PROVIDER, // ✅ Use UserRole enum
-          message: providerMessage,
+          actor: new Types.ObjectId(providerId.toString()),
+          actorRole: UserRole.PROVIDER,
+          message: providerMessage || "Provider accepted the task",
         },
       ],
     });
 
+    console.log("✅ Booking created:", booking._id);
+
     // Update task to CONVERTED status
     task.status = TaskStatus.CONVERTED;
     task.acceptedProvider = {
-      providerId: providerId as Types.ObjectId,
+      providerId: new Types.ObjectId(providerId.toString()),
       acceptedAt: new Date(),
       providerMessage: providerMessage,
     };
@@ -100,13 +192,18 @@ export class TaskBookingService {
     task.convertedAt = new Date();
     await task.save();
 
+    console.log("✅ Task converted to booking");
+
+    // Populate and return
+    const populatedBooking = await booking.populate([
+      { path: "clientId", select: "name email phone" },
+      { path: "providerId", select: "businessName locationData profile" },
+      { path: "serviceId", select: "title description pricing" },
+    ]);
+
     return {
       task,
-      booking: await booking.populate([
-        { path: "clientId", select: "name email phone" },
-        { path: "providerId", select: "businessName locationData profile" },
-        { path: "serviceId", select: "title description pricing" },
-      ]),
+      booking: populatedBooking,
     };
   }
 

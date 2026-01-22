@@ -179,6 +179,48 @@ export class ProviderTaskHandlers {
   }
 
   /**
+ * ✅ NEW: Get tasks where provider was specifically requested by customers
+ * GET /api/tasks/provider/requested
+ */
+static async getRequestedTasks(req: AuthenticatedRequest, res: Response) {
+  try {
+    const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: User not authenticated",
+      });
+    }
+
+    const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+
+    const result = await taskService.getRequestedTasksForProvider(
+      provider._id.toString()
+    );
+
+    if (result.error) {
+      return res.status(400).json({
+        success: false,
+        message: result.message,
+        error: result.error,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      data: {
+        tasks: result.tasks,
+        count: result.tasks?.length || 0,
+      },
+    });
+  } catch (error) {
+    return handleError(res, error, "Failed to retrieve requested tasks");
+  }
+}
+
+  /**
    * Express interest in a floating task
    * POST /api/tasks/:taskId/express-interest
    */
@@ -504,69 +546,93 @@ export class ProviderTaskHandlers {
    * ✅ UPDATED: Get a specific task details (provider view)
    * GET /api/tasks/provider/:taskId
    */
-  static async getTaskDetails(req: AuthenticatedRequest, res: Response) {
-    try {
-      const { taskId } = req.params;
-      const userId = req.userId;
+static async getTaskDetails(req: AuthenticatedRequest, res: Response) {
+  try {
+    const { taskId } = req.params;
+    const userId = req.userId;
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "Unauthorized: User not authenticated",
-        });
-      }
-
-      if (!validateObjectId(taskId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid task ID",
-        });
-      }
-
-      const provider = await ProviderTaskHandlers.getProviderProfile(userId);
-      const providerId = provider._id.toString();
-
-      const result = await taskService.getTaskById(taskId);
-
-      if (result.error || !result.task) {
-        return res.status(404).json({
-          success: false,
-          message: result.message,
-        });
-      }
-
-      const task = result.task;
-      const hasAccess =
-        task.matchedProviders?.some(
-          (mp: any) => mp.providerId?.toString() === providerId
-        ) ||
-        task.interestedProviders?.some(
-          (ip: any) => ip.providerId?.toString() === providerId
-        ) ||
-        (task.requestedProvider &&
-          task.requestedProvider.providerId?.toString() === providerId) ||
-        (task.acceptedProvider &&
-          task.acceptedProvider.providerId?.toString() === providerId) ||
-        task.status === TaskStatus.FLOATING;
-
-      if (!hasAccess) {
-        return res.status(403).json({
-          success: false,
-          message: "Forbidden: You don't have access to this task",
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: result.message,
-        data: {
-          task: result.task,
-        },
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: User not authenticated",
       });
-    } catch (error) {
-      return handleError(res, error, "Failed to retrieve task details");
     }
+
+    if (!validateObjectId(taskId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid task ID",
+      });
+    }
+
+    const provider = await ProviderTaskHandlers.getProviderProfile(userId);
+    const providerId = provider._id.toString();
+
+    const result = await taskService.getTaskById(taskId);
+
+    if (result.error || !result.task) {
+      return res.status(404).json({
+        success: false,
+        message: result.message,
+      });
+    }
+
+    const task = result.task;
+    
+    // ✅ FIXED: More comprehensive access check
+    const hasAccess =
+      // Provider is in matched list
+      task.matchedProviders?.some(
+        (mp: any) => mp.providerId?._id?.toString() === providerId || 
+                     mp.providerId?.toString() === providerId
+      ) ||
+      // Provider expressed interest
+      task.interestedProviders?.some(
+        (ip: any) => ip.providerId?._id?.toString() === providerId || 
+                     ip.providerId?.toString() === providerId
+      ) ||
+      // Provider was requested (check both populated and non-populated)
+      (task.requestedProvider?.providerId?._id?.toString() === providerId ||
+       task.requestedProvider?.providerId?.toString() === providerId) ||
+      // Provider accepted the task
+      (task.acceptedProvider?.providerId?._id?.toString() === providerId ||
+       task.acceptedProvider?.providerId?.toString() === providerId) ||
+      // Task is floating (any provider can view)
+      task.status === TaskStatus.FLOATING ||
+      // Task is in REQUESTED status and this provider is the requested one
+      (task.status === TaskStatus.REQUESTED && 
+       (task.requestedProvider?.providerId?._id?.toString() === providerId ||
+        task.requestedProvider?.providerId?.toString() === providerId));
+
+    if (!hasAccess) {
+      // ✅ IMPROVED: Log debug info for troubleshooting
+      console.log('Access denied for provider:', {
+        providerId,
+        taskId,
+        taskStatus: task.status,
+        hasRequestedProvider: !!task.requestedProvider,
+        requestedProviderId: task.requestedProvider?.providerId?.toString(),
+        matchedCount: task.matchedProviders?.length || 0,
+        interestedCount: task.interestedProviders?.length || 0,
+      });
+
+      return res.status(403).json({
+        success: false,
+        message: "Forbidden: You don't have access to this task",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      data: {
+        task: result.task,
+      },
+    });
+  } catch (error) {
+    return handleError(res, error, "Failed to retrieve task details");
   }
+}
 
   /**
    * ✅ NEW: Get booking details

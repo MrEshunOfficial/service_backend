@@ -81,7 +81,7 @@ export interface Task {
     flexibleDates?: boolean;
     timeSlot?: {
       start: string;
-      end: string;
+      end?: string;
     };
   };
   estimatedBudget?: {
@@ -289,7 +289,7 @@ export interface TaskResponse {
  */
 export interface TaskListResponse {
   message: string;
-  tasks?: Task[] | Partial<Task>[]; // Allow partial tasks for lean queries
+  tasks?: Task[] | Partial<Task>[];
   error?: string;
 }
 

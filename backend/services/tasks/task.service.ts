@@ -148,7 +148,7 @@ export class TaskService {
     filters?: {
       status?: TaskStatus;
       includeDeleted?: boolean;
-      includeConverted?: boolean; // ✅ NEW: Option to include/exclude converted tasks
+      includeConverted?: boolean; 
     }
   ): Promise<TaskListResponse> {
     try {
@@ -160,8 +160,6 @@ export class TaskService {
       if (filters?.status) {
         query.status = filters.status;
       }
-
-      // ✅ NEW: Option to exclude converted tasks (default: include)
       if (filters?.includeConverted === false) {
         query.status = { ...query.status, $ne: TaskStatus.CONVERTED };
       }
@@ -183,7 +181,7 @@ export class TaskService {
           "acceptedProvider.providerId",
           "businessName locationData profile"
         )
-        .populate("convertedToBookingId") // ✅ NEW: Populate booking reference
+        .populate("convertedToBookingId")
         .sort({ createdAt: -1 });
 
       return {
@@ -661,6 +659,35 @@ export class TaskService {
       };
     }
   }
+
+  /**
+ * Get tasks where provider was specifically requested
+ */
+async getRequestedTasksForProvider(
+  providerId: string
+): Promise<TaskListResponse> {
+  try {
+    const tasks = await TaskModelInstance.find({
+      "requestedProvider.providerId": providerId,
+      status: TaskStatus.REQUESTED,
+      isDeleted: { $ne: true },
+      $or: [{ expiresAt: { $gt: new Date() } }, { expiresAt: null }],
+    })
+      .populate("customerId", "name email phone")
+      .populate("matchedProviders.providerId", "businessName locationData")
+      .sort({ "requestedProvider.requestedAt": -1 });
+
+    return {
+      message: "Requested tasks retrieved successfully",
+      tasks: tasks.map((t) => t.toObject()),
+    };
+  } catch (error: any) {
+    return {
+      message: "Failed to retrieve requested tasks",
+      error: error.message,
+    };
+  }
+}
 
   /**
    * Re-run matching for a task (if customer wants to try again)
