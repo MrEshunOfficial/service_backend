@@ -205,7 +205,7 @@ export class TaskService {
     try {
       const tasks = await TaskModelInstance.find({
         "matchedProviders.providerId": providerId,
-        status: TaskStatus.MATCHED,
+        status: { $in: [TaskStatus.MATCHED, TaskStatus.REQUESTED, TaskStatus.ACCEPTED, TaskStatus.CONVERTED] },
         isDeleted: { $ne: true },
         $or: [{ expiresAt: { $gt: new Date() } }, { expiresAt: null }],
       })
@@ -669,7 +669,7 @@ async getRequestedTasksForProvider(
   try {
     const tasks = await TaskModelInstance.find({
       "requestedProvider.providerId": providerId,
-      status: TaskStatus.REQUESTED,
+      status: { $in: [TaskStatus.REQUESTED, TaskStatus.ACCEPTED, TaskStatus.CONVERTED] },
       isDeleted: { $ne: true },
       $or: [{ expiresAt: { $gt: new Date() } }, { expiresAt: null }],
     })
