@@ -9,262 +9,203 @@ import { ServiceModel } from "../../models/service.model";
 import { UserRole } from "../../types/base.types";
 import { BookingStatus, PaymentStatus } from "../../types/booking.types";
 import { TaskStatus } from "../../types/tasks.types";
-import ProfileModel from "../../models/profiles/userProfile.model";
-import { ClientModel } from "../../models/profiles/clientProfileModel";
 
 export class TaskBookingService {
- // CORRECTED FIX for task-booking.service.ts - acceptTaskAndCreateBooking method
-// This handles the case where task.customerId is POPULATED with the User document
-
-/**
- * ✅ FIXED: Provider accepts a task - creates booking with correct client ID
- * This is the main handoff point from discovery to execution
- */
-static async acceptTaskAndCreateBooking(
-  taskId: string | Types.ObjectId,
-  providerId: string | Types.ObjectId,
-  providerMessage?: string
-) {
-  console.log("=== ACCEPT TASK AND CREATE BOOKING ===");
-  console.log("Task ID:", taskId);
-  console.log("Provider ID:", providerId);
-
-  // Find the task with populated data
-  const task = await TaskModelInstance.findById(taskId)
-    .populate("customerId")
-    .populate("matchedProviders.providerId")
-    .populate("matchedProviders.matchedServices");
-
-  if (!task) {
-    throw new Error("Task not found");
-  }
-  console.log("✅ Task found");
-  console.log("Task Status:", task.status);
-
-  // Validate task status
-  if (task.status !== TaskStatus.REQUESTED) {
-    throw new Error(
-      `Task must be in REQUESTED status. Current status: ${task.status}`
-    );
-  }
-
-  // Validate provider is the requested one
-  console.log("Comparing provider IDs:");
-  console.log("  Requested:", task.requestedProvider?.providerId.toString());
-  console.log("  Current:", providerId.toString());
-
-  if (
-    task.requestedProvider?.providerId.toString() !== providerId.toString()
+  /**
+   * ✅ FIXED: Provider accepts a task - creates booking
+   * This is the main handoff point from discovery to execution
+   */
+  static async acceptTaskAndCreateBooking(
+    taskId: string | Types.ObjectId,
+    providerId: string | Types.ObjectId,
+    providerMessage?: string
   ) {
-    throw new Error("Only the requested provider can accept this task");
-  }
+    console.log("=== ACCEPT TASK AND CREATE BOOKING ===");
+    console.log("Task ID:", taskId);
+    console.log("Provider ID:", providerId);
 
-  // Check if task is expired
-  if (task.expiresAt && task.expiresAt < new Date()) {
-    throw new Error("Task has expired");
-  }
+    // Find the task with populated data
+    const task = await TaskModelInstance.findById(taskId)
+      .populate("customerId")
+      .populate("matchedProviders.providerId")
+      .populate("matchedProviders.matchedServices");
 
-  // ✅ FIX 1: Extract the actual User._id from task.customerId (which might be populated)
-  console.log("Resolving client profile ID...");
-  console.log("task.customerId type:", typeof task.customerId);
-  console.log("task.customerId:", task.customerId);
-
-  let customerUserId: string;
-  
-  // Handle both populated and non-populated cases
-  if (typeof task.customerId === 'object' && task.customerId !== null) {
-    // It's populated - extract the _id
-    customerUserId = (task.customerId as any)._id.toString();
-    console.log("✅ Extracted User._id from populated customer:", customerUserId);
-  } else {
-    // It's just an ID
-    customerUserId = task.customerId.toString();
-    console.log("✅ Using direct customerId:", customerUserId);
-  }
-
-  // Now find the UserProfile using the User._id
-  const userProfile = await ProfileModel.findOne({
-    userId: customerUserId,
-    isDeleted: { $ne: true },
-  });
-
-  if (!userProfile) {
-    console.error("❌ User profile not found for userId:", customerUserId);
-    throw new Error("Customer user profile not found");
-  }
-
-  console.log("✅ Found user profile:", userProfile._id.toString());
-  console.log("   User role:", userProfile.role);
-
-  // Now get the ClientProfile
-  const clientProfile = await ClientModel.findOne({
-    profile: userProfile._id,
-    isDeleted: { $ne: true },
-  });
-
-  if (!clientProfile) {
-    console.error("❌ Client profile not found for userProfile:", userProfile._id);
-    throw new Error("Customer client profile not found. Customer must have a client profile to create bookings.");
-  }
-
-  console.log("✅ Found client profile:", clientProfile._id.toString());
-
-  // ✅ FIX 2: Find service with multiple fallback strategies
-  let serviceId: Types.ObjectId | null = null;
-
-  // Strategy 1: Check matched services from matching algorithm
-  console.log("Finding provider services...");
-  const matchedProvider = task.matchedProviders?.find(
-    (mp) => mp.providerId.toString() === providerId.toString()
-  );
-
-  if (matchedProvider?.matchedServices && matchedProvider.matchedServices.length > 0) {
-    serviceId = matchedProvider.matchedServices[0] as Types.ObjectId;
-    console.log("✅ Found service from matched services:", serviceId);
-  }
-
-  // Strategy 2: If no matched service, find ANY active service from provider
-  if (!serviceId) {
-    console.log("No matched services found, searching provider's active services...");
-    
-    const providerProfile = await ProviderModel.findById(providerId)
-      .populate('serviceOfferings');
-    
-    if (providerProfile?.serviceOfferings && providerProfile.serviceOfferings.length > 0) {
-      const firstService = providerProfile.serviceOfferings[0];
-      serviceId = firstService._id as Types.ObjectId;
-      console.log("✅ Found service from provider offerings:", serviceId);
+    if (!task) {
+      throw new Error("Task not found");
     }
-  }
+    console.log("✅ Task found");
+    console.log("Task Status:", task.status);
 
-  // Strategy 3: Search Service collection directly
-  if (!serviceId) {
-    console.log("No services in provider profile, searching Service collection...");
-    
-    const providerService = await ServiceModel.findOne({
-      providerId: providerId,
-      isActive: true,
-      deletedAt: null,
-    });
-
-    if (providerService) {
-      serviceId = providerService._id as Types.ObjectId;
-      console.log("✅ Found service from Service collection:", serviceId);
+    // Validate task status
+    if (task.status !== TaskStatus.REQUESTED) {
+      throw new Error(
+        `Task must be in REQUESTED status. Current status: ${task.status}`
+      );
     }
-  }
 
-  // Strategy 4: Use task category to find a relevant service
-  if (!serviceId && task.category) {
-    console.log("Trying to find service by task category...");
-    
-    const categoryService = await ServiceModel.findOne({
-      providerId: providerId,
-      categoryId: task.category,
-      isActive: true,
-      deletedAt: null,
-    });
+    // Validate provider is the requested one
+    console.log("Comparing provider IDs:");
+    console.log("  Requested:", task.requestedProvider?.providerId.toString());
+    console.log("  Current:", providerId.toString());
 
-    if (categoryService) {
-      serviceId = categoryService._id as Types.ObjectId;
-      console.log("✅ Found service by category:", serviceId);
+    if (
+      task.requestedProvider?.providerId.toString() !== providerId.toString()
+    ) {
+      throw new Error("Only the requested provider can accept this task");
     }
-  }
 
-  // Final check
-  if (!serviceId) {
-    console.log("❌ No service found for provider");
-    throw new Error(
-      "No service found for this provider. The provider must have at least one active service to accept tasks."
+    // Check if task is expired
+    if (task.expiresAt && task.expiresAt < new Date()) {
+      throw new Error("Task has expired");
+    }
+
+    // ✅ FIX 1: Find service with multiple fallback strategies
+    let serviceId: Types.ObjectId | null = null;
+
+    // Strategy 1: Check matched services from matching algorithm
+    console.log("Finding provider services...");
+    const matchedProvider = task.matchedProviders?.find(
+      (mp) => mp.providerId.toString() === providerId.toString()
     );
-  }
 
-  // Generate booking number
-  const bookingNumber = await BookingModel.generateBookingNumber();
-  console.log("✅ Generated booking number:", bookingNumber);
+    if (matchedProvider?.matchedServices && matchedProvider.matchedServices.length > 0) {
+      serviceId = matchedProvider.matchedServices[0] as Types.ObjectId;
+      console.log("✅ Found service from matched services:", serviceId);
+    }
 
-  // Ensure proper time slot with validation
-  let timeSlot = task.schedule.timeSlot;
-  if (!timeSlot || !timeSlot.start || !timeSlot.end) {
-    console.log("⚠️ No valid time slot, using default business hours");
-    timeSlot = {
-      start: "09:00",
-      end: "17:00",
+    // Strategy 2: If no matched service, find ANY active service from provider
+    if (!serviceId) {
+      console.log("No matched services found, searching provider's active services...");
+      
+      const providerProfile = await ProviderModel.findById(providerId)
+        .populate('serviceOfferings');
+      
+      if (providerProfile?.serviceOfferings && providerProfile.serviceOfferings.length > 0) {
+        // Get the first active service
+        const firstService = providerProfile.serviceOfferings[0];
+        serviceId = firstService._id as Types.ObjectId;
+        console.log("✅ Found service from provider offerings:", serviceId);
+      }
+    }
+
+    // Strategy 3: Search Service collection directly
+    if (!serviceId) {
+      console.log("No services in provider profile, searching Service collection...");
+      
+      const providerService = await ServiceModel.findOne({
+        providerId: providerId,
+        isActive: true,
+        deletedAt: null,
+      });
+
+      if (providerService) {
+        serviceId = providerService._id as Types.ObjectId;
+        console.log("✅ Found service from Service collection:", serviceId);
+      }
+    }
+
+    // Strategy 4: Use task category to find a relevant service
+    if (!serviceId && task.category) {
+      console.log("Trying to find service by task category...");
+      
+      const categoryService = await ServiceModel.findOne({
+        providerId: providerId,
+        categoryId: task.category,
+        isActive: true,
+        deletedAt: null,
+      });
+
+      if (categoryService) {
+        serviceId = categoryService._id as Types.ObjectId;
+        console.log("✅ Found service by category:", serviceId);
+      }
+    }
+
+    // Final check
+    if (!serviceId) {
+      console.log("❌ No service found for provider");
+      throw new Error(
+        "No service found for this provider. The provider must have at least one active service to accept tasks."
+      );
+    }
+
+    // Generate booking number
+    const bookingNumber = await BookingModel.generateBookingNumber();
+    console.log("✅ Generated booking number:", bookingNumber);
+
+    // ✅ FIX 2: Ensure proper time slot with validation
+    let timeSlot = task.schedule.timeSlot;
+    if (!timeSlot || !timeSlot.start || !timeSlot.end) {
+      console.log("⚠️ No valid time slot, using default business hours");
+      timeSlot = {
+        start: "09:00",
+        end: "17:00",
+      };
+    }
+
+    // ✅ FIX 3: Ensure valid scheduled date
+    let scheduledDate = task.schedule.preferredDate;
+    if (!scheduledDate || scheduledDate < new Date()) {
+      console.log("⚠️ No valid scheduled date, using tomorrow");
+      scheduledDate = new Date();
+      scheduledDate.setDate(scheduledDate.getDate() + 1);
+      scheduledDate.setHours(9, 0, 0, 0);
+    }
+
+    // ✅ Create the booking with proper enum values and validation
+    const booking = await BookingModel.create({
+      bookingNumber,
+      taskId: task._id,
+      clientId: task.customerId,
+      providerId: providerId,
+      serviceId: serviceId,
+      serviceLocation: task.customerLocation,
+      scheduledDate: scheduledDate,
+      scheduledTimeSlot: timeSlot,
+      serviceDescription: task.description,
+      specialInstructions: providerMessage,
+      estimatedPrice: task.estimatedBudget?.max || task.estimatedBudget?.min,
+      currency: task.estimatedBudget?.currency || "GHS",
+      status: BookingStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PENDING,
+      statusHistory: [
+        {
+          status: BookingStatus.CONFIRMED,
+          timestamp: new Date(),
+          actor: new Types.ObjectId(providerId.toString()),
+          actorRole: UserRole.PROVIDER,
+          message: providerMessage || "Provider accepted the task",
+        },
+      ],
+    });
+
+    console.log("✅ Booking created:", booking._id);
+
+    // Update task to CONVERTED status
+    task.status = TaskStatus.CONVERTED;
+    task.acceptedProvider = {
+      providerId: new Types.ObjectId(providerId.toString()),
+      acceptedAt: new Date(),
+      providerMessage: providerMessage,
+    };
+    task.convertedToBookingId = booking._id;
+    task.convertedAt = new Date();
+    await task.save();
+
+    console.log("✅ Task converted to booking");
+
+    // Populate and return
+    const populatedBooking = await booking.populate([
+      { path: "clientId", select: "name email phone" },
+      { path: "providerId", select: "businessName locationData profile" },
+      { path: "serviceId", select: "title description pricing" },
+    ]);
+
+    return {
+      task,
+      booking: populatedBooking,
     };
   }
-
-  // Ensure valid scheduled date
-  let scheduledDate = task.schedule.preferredDate;
-  if (!scheduledDate || scheduledDate < new Date()) {
-    console.log("⚠️ No valid scheduled date, using tomorrow");
-    scheduledDate = new Date();
-    scheduledDate.setDate(scheduledDate.getDate() + 1);
-    scheduledDate.setHours(9, 0, 0, 0);
-  }
-
-  // ✅ FIX 3: Create the booking with CORRECT ClientProfile._id
-  console.log("Creating booking with:");
-  console.log("  - clientId (ClientProfile._id):", clientProfile._id.toString());
-  console.log("  - providerId:", providerId.toString());
-  console.log("  - serviceId:", serviceId.toString());
-
-  const booking = await BookingModel.create({
-    bookingNumber,
-    taskId: task._id,
-    clientId: clientProfile._id,  // ✅ FIXED: Use ClientProfile._id
-    providerId: providerId,
-    serviceId: serviceId,
-    serviceLocation: task.customerLocation,
-    scheduledDate: scheduledDate,
-    scheduledTimeSlot: timeSlot,
-    serviceDescription: task.description,
-    specialInstructions: providerMessage,
-    estimatedPrice: task.estimatedBudget?.max || task.estimatedBudget?.min,
-    currency: task.estimatedBudget?.currency || "GHS",
-    status: BookingStatus.CONFIRMED,
-    paymentStatus: PaymentStatus.PENDING,
-    statusHistory: [
-      {
-        status: BookingStatus.CONFIRMED,
-        timestamp: new Date(),
-        actor: new Types.ObjectId(providerId.toString()),
-        actorRole: UserRole.PROVIDER,
-        message: providerMessage || "Provider accepted the task",
-      },
-    ],
-  });
-
-  console.log("✅ Booking created successfully!");
-  console.log("   Booking._id:", booking._id.toString());
-  console.log("   Booking.clientId:", booking.clientId.toString());
-  console.log("   Booking.providerId:", booking.providerId.toString());
-
-  // Update task to CONVERTED status
-  task.status = TaskStatus.CONVERTED;
-  task.acceptedProvider = {
-    providerId: new Types.ObjectId(providerId.toString()),
-    acceptedAt: new Date(),
-    providerMessage: providerMessage,
-  };
-  task.convertedToBookingId = booking._id;
-  task.convertedAt = new Date();
-  await task.save();
-
-  console.log("✅ Task converted to booking");
-
-  // Populate and return
-  const populatedBooking = await booking.populate([
-    { path: "clientId", select: "profile savedAddresses" },
-    { path: "providerId", select: "businessName locationData profile" },
-    { path: "serviceId", select: "title description pricing" },
-  ]);
-
-  console.log("=== BOOKING CREATION COMPLETE ===\n");
-
-  return {
-    task,
-    booking: populatedBooking,
-  };
-}
 
   /**
    * Provider rejects a task request
