@@ -1,4 +1,4 @@
-// services/task.service.ts - REFACTORED (Discovery Phase Only)
+// services/task.service.ts - CORRECT FIX with proper schema understanding
 
 import { Types } from "mongoose";
 import TaskModelInstance from "../../models/task.model";
@@ -19,6 +19,25 @@ import { TaskBookingService } from "./task-booking.service";
 
 export class TaskService {
   /**
+   * ✅ CORRECT: Populate provider with nested UserProfile AND User
+   * Architecture: ProviderProfile -> UserProfile -> User
+   */
+  private getProviderPopulateConfig() {
+    return {
+      path: "providerId",
+      select: "businessName locationData profile isActive hasVerifiedAddress providerContactInfo",
+      populate: {
+        path: "profile", // This gets UserProfile
+        select: "userId bio mobileNumber profilePictureId role",
+        populate: {
+          path: "userId", // This gets the actual User with firstName, lastName, email
+          select: "firstName lastName email phone",
+        },
+      },
+    };
+  }
+
+  /**
    * Create a new task and automatically attempt matching
    */
   async createTask(
@@ -26,7 +45,6 @@ export class TaskService {
     data: CreateTaskRequestBody
   ): Promise<TaskWithProvidersResponse> {
     try {
-      // Create the task
       const task = new TaskModelInstance({
         ...data,
         customerId,
@@ -35,14 +53,12 @@ export class TaskService {
 
       await task.save();
 
-      // Attempt to find matches
       const matchingStrategy = data.matchingStrategy || "intelligent";
       const matchingResult = await taskMatchingService.findMatchesForTask(
         task,
         matchingStrategy
       );
 
-      // Update task with matching results
       if (matchingResult.matches.length > 0) {
         task.matchedProviders = matchingResult.matches.map((m) => ({
           providerId: m.providerId,
@@ -66,12 +82,20 @@ export class TaskService {
 
       await task.save();
 
-      // Populate task data for response
+      // ✅ FIXED: Three-level population
       await task.populate([
         { path: "customerId", select: "name email" },
         {
           path: "matchedProviders.providerId",
-          select: "businessName locationData profile",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
         },
       ]);
 
@@ -104,23 +128,55 @@ export class TaskService {
     try {
       const task = await TaskModelInstance.findById(taskId)
         .populate("customerId", "name email")
-        .populate(
-          "matchedProviders.providerId",
-          "businessName locationData profile"
-        )
-        .populate(
-          "interestedProviders.providerId",
-          "businessName locationData profile"
-        )
-        .populate(
-          "requestedProvider.providerId",
-          "businessName locationData profile"
-        )
-        .populate(
-          "acceptedProvider.providerId",
-          "businessName locationData profile"
-        )
-        .populate("convertedToBookingId"); // ✅ NEW: Populate booking if converted
+        .populate({
+          path: "matchedProviders.providerId",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
+        })
+        .populate({
+          path: "interestedProviders.providerId",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
+        })
+        .populate({
+          path: "requestedProvider.providerId",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
+        })
+        .populate({
+          path: "acceptedProvider.providerId",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
+        })
+        .populate("convertedToBookingId");
 
       if (!task || task.isDeleted) {
         return {
@@ -141,14 +197,15 @@ export class TaskService {
   }
 
   /**
-   * Get all tasks for a customer
+   * ✅ FIXED: Get all tasks for a customer with THREE-LEVEL population
+   * ProviderProfile -> UserProfile -> User
    */
   async getCustomerTasks(
     customerId: string,
     filters?: {
       status?: TaskStatus;
       includeDeleted?: boolean;
-      includeConverted?: boolean; 
+      includeConverted?: boolean;
     }
   ): Promise<TaskListResponse> {
     try {
@@ -165,22 +222,78 @@ export class TaskService {
       }
 
       const tasks = await TaskModelInstance.find(query)
-        .populate(
-          "matchedProviders.providerId",
-          "businessName locationData profile"
-        )
-        .populate(
-          "interestedProviders.providerId",
-          "businessName locationData profile"
-        )
-        .populate(
-          "requestedProvider.providerId",
-          "businessName locationData profile"
-        )
-        .populate(
-          "acceptedProvider.providerId",
-          "businessName locationData profile"
-        )
+        .populate({
+          path: "matchedProviders.providerId",
+          select: "businessName locationData profile isActive hasVerifiedAddress providerContactInfo",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber role",
+            populate: [
+              {
+                path: "userId",
+                select: "name email phone",
+              },
+              {
+                path: "profilePictureId",
+                select: "url thumbnailUrl",
+              },
+            ],
+          },
+        })
+        .populate({
+          path: "interestedProviders.providerId",
+          select: "businessName locationData profile isActive hasVerifiedAddress providerContactInfo",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+             populate: [
+              {
+                path: "userId",
+                select: "name email phone",
+              },
+              {
+                path: "profilePictureId",
+                select: "url thumbnailUrl",
+              },
+            ],
+          },
+        })
+        .populate({
+          path: "requestedProvider.providerId",
+          select: "businessName locationData profile isActive hasVerifiedAddress providerContactInfo",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: [
+              {
+                path: "userId",
+                select: "name email phone",
+              },
+              {
+                path: "profilePictureId",
+                select: "url thumbnailUrl",
+              },
+            ],
+          },
+        })
+        .populate({
+          path: "acceptedProvider.providerId",
+          select: "businessName locationData profile isActive hasVerifiedAddress providerContactInfo",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: [
+              {
+                path: "userId",
+                select: "name email phone",
+              },
+              {
+                path: "profilePictureId",
+                select: "url thumbnailUrl",
+              },
+            ],
+          },
+        })
         .populate("convertedToBookingId")
         .sort({ createdAt: -1 });
 
@@ -197,7 +310,7 @@ export class TaskService {
   }
 
   /**
-   * Get matched tasks for a provider (tasks where they were algorithmically matched)
+   * Get matched tasks for a provider
    */
   async getMatchedTasksForProvider(
     providerId: string
@@ -205,7 +318,14 @@ export class TaskService {
     try {
       const tasks = await TaskModelInstance.find({
         "matchedProviders.providerId": providerId,
-        status: { $in: [TaskStatus.MATCHED, TaskStatus.REQUESTED, TaskStatus.ACCEPTED, TaskStatus.CONVERTED] },
+        status: {
+          $in: [
+            TaskStatus.MATCHED,
+            TaskStatus.REQUESTED,
+            TaskStatus.ACCEPTED,
+            TaskStatus.CONVERTED,
+          ],
+        },
         isDeleted: { $ne: true },
         $or: [{ expiresAt: { $gt: new Date() } }, { expiresAt: null }],
       })
@@ -225,7 +345,7 @@ export class TaskService {
   }
 
   /**
-   * Get floating tasks for a provider (tasks they can express interest in)
+   * Get floating tasks for a provider
    */
   async getFloatingTasksForProvider(
     providerId: Types.ObjectId,
@@ -251,7 +371,7 @@ export class TaskService {
   }
 
   /**
-   * ✅ NEW: Get converted tasks (tasks that became bookings)
+   * Get converted tasks
    */
   async getConvertedTasks(
     customerId?: string,
@@ -277,7 +397,7 @@ export class TaskService {
   }
 
   /**
-   * ✅ NEW: Get task with its booking (if converted)
+   * Get task with its booking
    */
   async getTaskWithBooking(taskId: string): Promise<any> {
     try {
@@ -296,7 +416,7 @@ export class TaskService {
   }
 
   /**
-   * Update a task (only before it's requested or converted)
+   * Update a task
    */
   async updateTask(
     taskId: string,
@@ -318,7 +438,6 @@ export class TaskService {
         };
       }
 
-      // ✅ UPDATED: Can only update tasks in discovery phase
       if (
         task.status === TaskStatus.REQUESTED ||
         task.status === TaskStatus.ACCEPTED ||
@@ -329,7 +448,6 @@ export class TaskService {
         };
       }
 
-      // Update fields
       if (data.title) task.title = data.title;
       if (data.description) task.description = data.description;
       if (data.customerLocation) task.customerLocation = data.customerLocation;
@@ -337,7 +455,6 @@ export class TaskService {
 
       await task.save();
 
-      // Re-run matching if significant changes were made
       if (data.title || data.description) {
         const matchingResult = await taskMatchingService.findMatchesForTask(
           task,
@@ -365,7 +482,15 @@ export class TaskService {
         { path: "customerId", select: "name email" },
         {
           path: "matchedProviders.providerId",
-          select: "businessName locationData profile",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
         },
       ]);
 
@@ -397,7 +522,6 @@ export class TaskService {
         };
       }
 
-      // Check if provider is suitable for the task
       const suitabilityCheck =
         await taskMatchingService.isProviderSuitableForTask(
           providerId,
@@ -411,18 +535,23 @@ export class TaskService {
         };
       }
 
-      // Add interest
       await task.addProviderInterest(providerId, data.message);
 
       await task.populate([
         { path: "customerId", select: "name email" },
         {
           path: "interestedProviders.providerId",
-          select: "businessName locationData profile",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
         },
       ]);
-
-      // TODO: Send notification to customer
 
       return {
         message: "Interest expressed successfully",
@@ -437,7 +566,7 @@ export class TaskService {
   }
 
   /**
-   * Customer requests a specific provider (from matched or interested list)
+   * Customer requests a specific provider
    */
   async requestProvider(
     data: RequestProviderRequestBody,
@@ -458,7 +587,6 @@ export class TaskService {
         };
       }
 
-      // Request the provider
       await task.requestProvider(
         new Types.ObjectId(data.providerId),
         data.message
@@ -468,11 +596,17 @@ export class TaskService {
         { path: "customerId", select: "name email" },
         {
           path: "requestedProvider.providerId",
-          select: "businessName locationData profile",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
         },
       ]);
-
-      // TODO: Send notification to provider
 
       return {
         message: "Provider requested successfully",
@@ -487,8 +621,7 @@ export class TaskService {
   }
 
   /**
-   * ✅ REFACTORED: Provider responds to a request (accept or reject)
-   * Accept now creates a Booking via TaskBookingService
+   * Provider responds to a request
    */
   async respondToRequest(
     data: ProviderResponseRequestBody,
@@ -504,7 +637,6 @@ export class TaskService {
       }
 
       if (data.action === "accept") {
-        // ✅ NEW: Use TaskBookingService to create booking
         const result = await TaskBookingService.acceptTaskAndCreateBooking(
           data.taskId,
           providerId,
@@ -514,25 +646,38 @@ export class TaskService {
         return {
           message: "Task accepted and booking created successfully",
           task: result.task.toObject(),
-          booking: result.booking.toObject(), // ✅ Return booking info
+          booking: result.booking.toObject(),
         };
       } else {
-        // Rejection stays in task service
         await task.rejectTask(new Types.ObjectId(providerId), data.message);
 
         await task.populate([
           { path: "customerId", select: "name email" },
           {
             path: "matchedProviders.providerId",
-            select: "businessName locationData profile",
+            select: "businessName locationData profile isActive hasVerifiedAddress",
+            populate: {
+              path: "profile",
+              select: "userId bio mobileNumber profilePictureId role",
+              populate: {
+                path: "userId",
+                select: "firstName lastName email phone",
+              },
+            },
           },
           {
             path: "interestedProviders.providerId",
-            select: "businessName locationData profile",
+            select: "businessName locationData profile isActive hasVerifiedAddress",
+            populate: {
+              path: "profile",
+              select: "userId bio mobileNumber profilePictureId role",
+              populate: {
+                path: "userId",
+                select: "firstName lastName email phone",
+              },
+            },
           },
         ]);
-
-        // TODO: Send notification to customer
 
         return {
           message: "Task rejected successfully",
@@ -548,12 +693,7 @@ export class TaskService {
   }
 
   /**
-   * ❌ REMOVED: startTask() - Now handled by booking.startService()
-   * ❌ REMOVED: completeTask() - Now handled by booking.complete()
-   */
-
-  /**
-   * ✅ UPDATED: Cancel a task (only during discovery phase)
+   * Cancel a task
    */
   async cancelTask(
     taskId: string,
@@ -570,7 +710,6 @@ export class TaskService {
         };
       }
 
-      // ✅ NEW: Prevent cancellation after conversion
       if (task.status === TaskStatus.CONVERTED) {
         return {
           message:
@@ -578,7 +717,6 @@ export class TaskService {
         };
       }
 
-      // Verify authorization
       if (userRole === UserRole.CUSTOMER) {
         if (task.customerId.toString() !== userId) {
           return {
@@ -599,11 +737,17 @@ export class TaskService {
         { path: "customerId", select: "name email" },
         {
           path: "requestedProvider.providerId",
-          select: "businessName locationData profile",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
         },
       ]);
-
-      // TODO: Send notification to the other party
 
       return {
         message: "Task cancelled successfully",
@@ -618,7 +762,7 @@ export class TaskService {
   }
 
   /**
-   * Delete a task (soft delete)
+   * Delete a task
    */
   async deleteTask(taskId: string, customerId: string): Promise<TaskResponse> {
     try {
@@ -636,7 +780,6 @@ export class TaskService {
         };
       }
 
-      // ✅ UPDATED: Can only delete tasks in discovery phase
       if (
         task.status === TaskStatus.ACCEPTED ||
         task.status === TaskStatus.CONVERTED
@@ -661,36 +804,45 @@ export class TaskService {
   }
 
   /**
- * Get tasks where provider was specifically requested
- */
-async getRequestedTasksForProvider(
-  providerId: string
-): Promise<TaskListResponse> {
-  try {
-    const tasks = await TaskModelInstance.find({
-      "requestedProvider.providerId": providerId,
-      status: { $in: [TaskStatus.REQUESTED, TaskStatus.ACCEPTED, TaskStatus.CONVERTED] },
-      isDeleted: { $ne: true },
-      $or: [{ expiresAt: { $gt: new Date() } }, { expiresAt: null }],
-    })
-      .populate("customerId", "name email phone")
-      .populate("matchedProviders.providerId", "businessName locationData")
-      .sort({ "requestedProvider.requestedAt": -1 });
+   * Get tasks where provider was specifically requested
+   */
+  async getRequestedTasksForProvider(
+    providerId: string
+  ): Promise<TaskListResponse> {
+    try {
+      const tasks = await TaskModelInstance.find({
+        "requestedProvider.providerId": providerId,
+        status: {
+          $in: [
+            TaskStatus.REQUESTED,
+            TaskStatus.ACCEPTED,
+            TaskStatus.CONVERTED,
+          ],
+        },
+        isDeleted: { $ne: true },
+        $or: [{ expiresAt: { $gt: new Date() } }, { expiresAt: null }],
+      })
+        .populate("customerId", "name email phone")
+        .populate({
+          path: "matchedProviders.providerId",
+          select: "businessName locationData",
+        })
+        .sort({ "requestedProvider.requestedAt": -1 });
 
-    return {
-      message: "Requested tasks retrieved successfully",
-      tasks: tasks.map((t) => t.toObject()),
-    };
-  } catch (error: any) {
-    return {
-      message: "Failed to retrieve requested tasks",
-      error: error.message,
-    };
+      return {
+        message: "Requested tasks retrieved successfully",
+        tasks: tasks.map((t) => t.toObject()),
+      };
+    } catch (error: any) {
+      return {
+        message: "Failed to retrieve requested tasks",
+        error: error.message,
+      };
+    }
   }
-}
 
   /**
-   * Re-run matching for a task (if customer wants to try again)
+   * Re-run matching for a task
    */
   async rematchTask(
     taskId: string,
@@ -712,7 +864,6 @@ async getRequestedTasksForProvider(
         };
       }
 
-      // ✅ UPDATED: Can only rematch tasks in discovery phase
       if (
         ![TaskStatus.PENDING, TaskStatus.MATCHED, TaskStatus.FLOATING].includes(
           task.status
@@ -723,13 +874,11 @@ async getRequestedTasksForProvider(
         };
       }
 
-      // Re-run matching
       const matchingResult = await taskMatchingService.findMatchesForTask(
         task,
         strategy || "intelligent"
       );
 
-      // Update task
       if (matchingResult.matches.length > 0) {
         task.matchedProviders = matchingResult.matches.map((m) => ({
           providerId: m.providerId,
@@ -751,7 +900,15 @@ async getRequestedTasksForProvider(
         { path: "customerId", select: "name email" },
         {
           path: "matchedProviders.providerId",
-          select: "businessName locationData profile",
+          select: "businessName locationData profile isActive hasVerifiedAddress",
+          populate: {
+            path: "profile",
+            select: "userId bio mobileNumber profilePictureId role",
+            populate: {
+              path: "userId",
+              select: "firstName lastName email phone",
+            },
+          },
         },
       ]);
 
@@ -775,5 +932,4 @@ async getRequestedTasksForProvider(
   }
 }
 
-// Export singleton instance
 export const taskService = new TaskService();

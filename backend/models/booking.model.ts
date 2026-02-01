@@ -1,4 +1,4 @@
-// models/booking.model.ts - REFACTORED (Execution Phase Only)
+// models/booking.model.ts - REFACTORED (Execution Phase with Validation Workflow)
 
 import { Schema, model, HydratedDocument, Types } from "mongoose";
 import {
@@ -51,7 +51,7 @@ const statusHistorySchema = new Schema(
 );
 
 /**
- * REFACTORED Booking Schema - EXECUTION PHASE ONLY
+ * REFACTORED Booking Schema - EXECUTION PHASE WITH VALIDATION WORKFLOW
  * Bookings are created when a Task is accepted by a provider
  */
 const bookingSchema = new Schema<Booking, IBookingModel, BookingMethods>(
@@ -145,16 +145,17 @@ const bookingSchema = new Schema<Booking, IBookingModel, BookingMethods>(
       default: "GHS",
     },
 
-    // Current Status (for quick queries) - EXECUTION PHASE ONLY
+    // Current Status (for quick queries) - EXECUTION PHASE WITH VALIDATION
     status: {
       type: String,
       enum: [
         BookingStatus.CONFIRMED, // Created from accepted task
         BookingStatus.IN_PROGRESS, // Service started
-        BookingStatus.COMPLETED, // Service finished
+        BookingStatus.AWAITING_VALIDATION, // Provider marked complete, awaiting customer approval
+        BookingStatus.VALIDATED, // Customer approved completion
+        BookingStatus.DISPUTED, // Customer disputed completion
+        BookingStatus.COMPLETED, // Service finished (legacy or auto-completed)
         BookingStatus.CANCELLED, // Cancelled after booking
-        // ❌ REMOVED: PENDING (tasks handle this)
-        // ❌ REMOVED: REJECTED (tasks handle this)
       ],
       default: BookingStatus.CONFIRMED,
       index: true,
@@ -164,6 +165,29 @@ const bookingSchema = new Schema<Booking, IBookingModel, BookingMethods>(
       enum: Object.values(PaymentStatus),
       default: PaymentStatus.PENDING,
       index: true,
+    },
+
+    // ✅ Validation fields
+    validatedAt: {
+      type: Date,
+    },
+    disputedAt: {
+      type: Date,
+    },
+    disputeReason: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+    },
+    customerRating: {
+      type: Number,
+      min: 1,
+      max: 5,
+    },
+    customerReview: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
     },
 
     // ✅ Status History (replaces individual timestamp fields)
@@ -282,16 +306,6 @@ bookingSchema.methods.restore = function (
 };
 
 /**
- * ✅ SIMPLIFIED: Confirm is no longer needed
- * Bookings are created in CONFIRMED state from accepted tasks
- */
-
-/**
- * ❌ REMOVED: reject() method
- * Rejection happens at Task level, not Booking level
- */
-
-/**
  * Start Service
  */
 bookingSchema.methods.startService = function (
@@ -314,9 +328,9 @@ bookingSchema.methods.startService = function (
 };
 
 /**
- * Complete Service
+ * ✅ UPDATED: Provider completes booking - moves to AWAITING_VALIDATION
  */
-bookingSchema.methods.complete = function (
+bookingSchema.methods.complete = async function (
   this: HydratedDocument<Booking, BookingMethods>,
   finalPrice?: number,
   providerId?: Types.ObjectId
@@ -325,14 +339,99 @@ bookingSchema.methods.complete = function (
     throw new Error("Only in-progress bookings can be completed");
   }
 
-  this.status = BookingStatus.COMPLETED;
+  // ✅ Changed: Move to AWAITING_VALIDATION instead of COMPLETED
+  this.status = BookingStatus.AWAITING_VALIDATION;
+  
   if (finalPrice !== undefined) {
     this.finalPrice = finalPrice;
   }
 
-  addStatusEntry(this, BookingStatus.COMPLETED, providerId, UserRole.PROVIDER);
+  // Add to status history
+  if (!this.statusHistory) {
+    this.statusHistory = [];
+  }
 
-  return this.save();
+  this.statusHistory.push({
+    status: BookingStatus.AWAITING_VALIDATION,
+    timestamp: new Date(),
+    actor: providerId || this.providerId,
+    actorRole: UserRole.PROVIDER,
+    message: "Provider marked booking as complete - awaiting customer validation",
+  });
+
+  await this.save();
+  return this;
+};
+
+/**
+ * ✅ NEW: Customer validates/approves booking completion
+ */
+bookingSchema.methods.validateCompletion = async function (
+  this: HydratedDocument<Booking, BookingMethods>,
+  approved: boolean,
+  clientId: Types.ObjectId,
+  rating?: number,
+  review?: string,
+  disputeReason?: string
+) {
+  if (this.status !== BookingStatus.AWAITING_VALIDATION) {
+    throw new Error("Only bookings awaiting validation can be validated");
+  }
+
+  if (this.clientId.toString() !== clientId.toString()) {
+    throw new Error("Only the customer can validate this booking");
+  }
+
+  if (!this.statusHistory) {
+    this.statusHistory = [];
+  }
+
+  if (approved) {
+    // ✅ Customer approves - booking is VALIDATED
+    this.status = BookingStatus.VALIDATED;
+    this.validatedAt = new Date();
+    
+    // Store rating and review
+    if (rating) {
+      if (rating < 1 || rating > 5) {
+        throw new Error("Rating must be between 1 and 5");
+      }
+      this.customerRating = rating;
+    }
+    
+    if (review) {
+      this.customerReview = review;
+    }
+
+    this.statusHistory.push({
+      status: BookingStatus.VALIDATED,
+      timestamp: new Date(),
+      actor: clientId,
+      actorRole: UserRole.CUSTOMER,
+      message: review || "Customer approved booking completion",
+    });
+  } else {
+    // ✅ Customer disputes - booking is DISPUTED
+    this.status = BookingStatus.DISPUTED;
+    this.disputedAt = new Date();
+    
+    if (!disputeReason) {
+      throw new Error("Dispute reason is required when rejecting completion");
+    }
+    
+    this.disputeReason = disputeReason;
+
+    this.statusHistory.push({
+      status: BookingStatus.DISPUTED,
+      timestamp: new Date(),
+      actor: clientId,
+      actorRole: UserRole.CUSTOMER,
+      message: disputeReason,
+    });
+  }
+
+  await this.save();
+  return this;
 };
 
 /**
@@ -345,8 +444,8 @@ bookingSchema.methods.cancel = function (
   cancelledBy: string,
   actorId?: Types.ObjectId
 ) {
-  if (this.status === BookingStatus.COMPLETED) {
-    throw new Error("Cannot cancel completed bookings");
+  if (this.status === BookingStatus.COMPLETED || this.status === BookingStatus.VALIDATED) {
+    throw new Error("Cannot cancel completed or validated bookings");
   }
 
   if (this.status === BookingStatus.CANCELLED) {
@@ -431,9 +530,9 @@ bookingSchema.statics.findByClient = function (clientId: string) {
     clientId,
     isDeleted: { $ne: true },
   })
-    .populate("taskId")
-    .populate("providerId", "businessName locationData")
-    .populate("serviceId", "title")
+    .populate("taskId", "title description")
+    .populate("providerId", "businessName locationData profile")
+    .populate("serviceId", "title description pricing")
     .sort({ createdAt: -1 });
 };
 
@@ -551,6 +650,23 @@ bookingSchema.virtual("isCompleted").get(function () {
 
 bookingSchema.virtual("isCancelled").get(function () {
   return this.status === BookingStatus.CANCELLED;
+});
+
+// ✅ NEW: Validation-related virtuals
+bookingSchema.virtual("isAwaitingValidation").get(function () {
+  return this.status === BookingStatus.AWAITING_VALIDATION;
+});
+
+bookingSchema.virtual("isValidated").get(function () {
+  return this.status === BookingStatus.VALIDATED;
+});
+
+bookingSchema.virtual("isDisputed").get(function () {
+  return this.status === BookingStatus.DISPUTED;
+});
+
+bookingSchema.virtual("requiresValidation").get(function () {
+  return this.status === BookingStatus.AWAITING_VALIDATION;
 });
 
 bookingSchema.virtual("isUpcoming").get(function () {

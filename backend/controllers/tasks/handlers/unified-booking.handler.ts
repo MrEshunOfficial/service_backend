@@ -1,16 +1,17 @@
-// handlers/unified-booking.handler.ts - FIXED
-// Unified handler that works for both customers and providers
+// handlers/unified-booking.handler.ts - FIXED VERSION
 
 import { Response } from "express";
 import { TaskBookingService } from "../../../services/tasks/task-booking.service";
 import { UserRole } from "../../../types/base.types";
 import { AuthenticatedRequest } from "../../../types/user.types";
+import { ValidateBookingRequestBody } from "../../../types/booking.types";
 import {
   handleError,
   validateObjectId,
 } from "../../../utils/controller-utils/controller.utils";
 import { ProviderModel } from "../../../models/profiles/provider.model";
 import { ProfileModel } from "../../../models/profiles/userProfile.model";
+import { ClientModel } from "../../../models/profiles/clientProfileModel";
 
 /**
  * Helper to extract ID from potentially populated field
@@ -62,6 +63,33 @@ async function getProviderProfile(userId: string) {
   }
 
   return provider;
+}
+
+/**
+ * ✅ FIXED: Helper to get client profile from userId
+ */
+async function getClientProfile(userId: string) {
+  // ✅ FIX 1: Use ProfileModel first to find the user profile
+  const userProfile = await ProfileModel.findOne({
+    userId: userId,
+    isDeleted: { $ne: true },
+  });
+
+  if (!userProfile) {
+    throw new Error("User profile not found");
+  }
+
+  // ✅ FIX 2: Use ClientModel with correct reference to profile
+  const client = await ClientModel.findOne({
+    profile: userProfile._id,
+    isDeleted: { $ne: true },
+  });
+
+  if (!client) {
+    throw new Error("Client profile not found");
+  }
+
+  return client;
 }
 
 /**
@@ -118,7 +146,12 @@ export async function getUnifiedBookingById(
 
     if (userRole === UserRole.CUSTOMER) {
       // Customer can view their own bookings
-      hasAccess = bookingClientId === userId;
+      try {
+        const client = await getClientProfile(userId);
+        hasAccess = bookingClientId === client._id.toString();
+      } catch (error) {
+        hasAccess = false;
+      }
     } else if (userRole === UserRole.PROVIDER) {
       // Provider needs to check their provider profile
       try {
@@ -196,12 +229,16 @@ export async function cancelUnifiedBooking(
       });
     }
 
-    // Determine the actual ID to pass to the service
+    // ✅ FIXED: Determine the actual ID to pass to the service
     let actorId = userId;
     
     if (userRole === UserRole.PROVIDER) {
       const provider = await getProviderProfile(userId);
       actorId = provider._id.toString();
+    } else if (userRole === UserRole.CUSTOMER) {
+      // ✅ FIX: Also get client profile ID for customers
+      const client = await getClientProfile(userId);
+      actorId = client._id.toString();
     }
 
     const booking = await TaskBookingService.cancelBooking(
@@ -223,6 +260,96 @@ export async function cancelUnifiedBooking(
       res,
       error,
       error.message || "Failed to cancel booking"
+    );
+  }
+}
+
+/**
+ * ✅ NEW: Validate booking completion (CUSTOMER ONLY)
+ * POST /api/tasks/bookings/:bookingId/validate
+ * 
+ * Request body:
+ * {
+ *   "approved": true/false,
+ *   "rating": 1-5 (optional, required if approved=true),
+ *   "review": "Great service!" (optional),
+ *   "disputeReason": "Service incomplete" (required if approved=false)
+ * }
+ */
+export async function validateBookingCompletion(
+  req: AuthenticatedRequest,
+  res: Response
+) {
+  try {
+    const { bookingId } = req.params;
+    const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: User not authenticated",
+      });
+    }
+
+    if (!validateObjectId(bookingId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid booking ID",
+      });
+    }
+
+    const { approved, rating, review, disputeReason } =
+      req.body as ValidateBookingRequestBody;
+
+    // Validation
+    if (typeof approved !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "'approved' field is required and must be a boolean",
+      });
+    }
+
+    if (!approved && !disputeReason) {
+      return res.status(400).json({
+        success: false,
+        message: "Dispute reason is required when rejecting completion",
+      });
+    }
+
+    if (rating !== undefined && (rating < 1 || rating > 5)) {
+      return res.status(400).json({
+        success: false,
+        message: "Rating must be between 1 and 5",
+      });
+    }
+
+    // ✅ FIXED: Get the client profile ID to pass to service
+    const client = await getClientProfile(userId);
+
+    // Validate booking completion
+    const booking = await TaskBookingService.validateBookingCompletion(
+      bookingId,
+      client._id.toString(), // ✅ Pass client profile ID, not user ID
+      approved,
+      rating,
+      review,
+      disputeReason
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: approved
+        ? "Booking approved successfully"
+        : "Booking completion disputed",
+      data: {
+        booking,
+      },
+    });
+  } catch (error: any) {
+    return handleError(
+      res,
+      error,
+      error.message || "Failed to validate booking"
     );
   }
 }

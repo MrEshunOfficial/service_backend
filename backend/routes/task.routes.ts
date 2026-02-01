@@ -1,4 +1,4 @@
-// routes/task.routes.ts - FIXED
+// routes/task.routes.ts - UPDATED WITH VALIDATION WORKFLOW
 
 import { Router } from "express";
 import { authenticateToken, requireAdmin } from "../middleware/auth.middleware";
@@ -42,6 +42,7 @@ import {
 import {
   getUnifiedBookingById,
   cancelUnifiedBooking,
+  validateBookingCompletion, // ✅ NEW
 } from "../controllers/tasks/handlers/unified-booking.handler";
 
 const router = Router();
@@ -76,7 +77,7 @@ router.get("/provider/dashboard", authenticateToken, requireProvider, getProvide
 router.get("/provider/:taskId", authenticateToken, requireProvider, getTaskDetails);
 
 // ==========================================
-// BOOKING ROUTES - FIXED
+// BOOKING ROUTES - WITH VALIDATION
 // ==========================================
 // ✅ Customer-specific booking routes
 router.get("/bookings/my-bookings", authenticateToken, requireCustomer, getMyBookings);
@@ -85,13 +86,12 @@ router.get("/bookings/my-bookings", authenticateToken, requireCustomer, getMyBoo
 router.get("/bookings/admin/all", authenticateToken, requireAdmin, getAllBookings);
 router.get("/bookings/admin/statistics", authenticateToken, requireAdmin, getBookingStatistics);
 
-// ✅ CRITICAL FIX: Use unified handler that validates ownership internally
-// This allows both customers AND providers to view their bookings
+// ✅ Unified handlers for both customers and providers
 router.get("/bookings/:bookingId", authenticateToken, getUnifiedBookingById);
-
-// ✅ CRITICAL FIX: Use unified handler that validates ownership internally
-// This allows both customers AND providers to cancel their bookings
 router.post("/bookings/:bookingId/cancel", authenticateToken, cancelUnifiedBooking);
+
+// ✅ NEW: Customer validation endpoint (CUSTOMER ONLY)
+router.post("/bookings/:bookingId/validate", authenticateToken, requireCustomer, validateBookingCompletion);
 
 // ✅ Provider-only booking actions
 router.post("/bookings/:bookingId/start", authenticateToken, requireProvider, startBooking);
