@@ -87,23 +87,19 @@ const serviceSchema = new Schema<Service, IServiceModel, ServiceMethods>(
       default: null,
     },
 
-    // Provider-specific fields
-providerId: {
-  type: [{
-    type: Schema.Types.ObjectId,
-    ref: "ProviderProfile",
-  }],
-  required: false,  // Change from true to false
-  default: [],      // Add default empty array
-  validate: {
-    validator: function(v: any[]) {
-      // Allow empty array OR valid ObjectIds
-      return !v || v.length === 0 || v.every(id => id && id.toString().length === 24);
+    /**
+     * Single provider reference.
+     * One provider can own many services, but each service
+     * belongs to at most one provider.
+     * Null/undefined = admin-created catalog service not yet assigned.
+     */
+    providerId: {
+      type: Schema.Types.ObjectId,
+      ref: "ProviderProfile",
+      required: false,
+      default: null,
+      index: true,
     },
-    message: 'Provider IDs must be valid ObjectIds'
-  },
-  index: true
-},
 
     // Pricing and availability
     servicePricing: {
@@ -161,7 +157,7 @@ providerId: {
   }
 );
 
-// Indexes for performance
+// Compound indexes for performance
 serviceSchema.index({ title: "text", description: "text", tags: "text" });
 serviceSchema.index({ categoryId: 1, isActive: 1, deletedAt: 1 });
 serviceSchema.index({ providerId: 1, isActive: 1, deletedAt: 1 });
@@ -224,18 +220,11 @@ serviceSchema.statics.findActive = function () {
 };
 
 serviceSchema.statics.findByCategory = function (categoryId: string) {
-  return this.find({
-    categoryId,
-    isActive: true,
-    deletedAt: null,
-  });
+  return this.find({ categoryId, isActive: true, deletedAt: null });
 };
 
 serviceSchema.statics.findByProvider = function (providerId: string) {
-  return this.find({
-    providerId,
-    deletedAt: null,
-  });
+  return this.find({ providerId, deletedAt: null });
 };
 
 serviceSchema.statics.searchServices = function (
@@ -253,43 +242,33 @@ serviceSchema.statics.searchServices = function (
     deletedAt: null,
   };
 
-  if (filters?.categoryId) {
-    query.categoryId = filters.categoryId;
-  }
-
-  if (filters?.providerId) {
-    query.providerId = filters.providerId;
-  }
+  if (filters?.categoryId) query.categoryId = filters.categoryId;
+  if (filters?.providerId) query.providerId = filters.providerId;
 
   if (filters?.minPrice || filters?.maxPrice) {
     query["servicePricing.serviceBasePrice"] = {};
-    if (filters.minPrice) {
+    if (filters.minPrice)
       query["servicePricing.serviceBasePrice"].$gte = filters.minPrice;
-    }
-    if (filters.maxPrice) {
+    if (filters.maxPrice)
       query["servicePricing.serviceBasePrice"].$lte = filters.maxPrice;
-    }
   }
 
   return this.find(query).sort({ score: { $meta: "textScore" } });
 };
 
-// Virtual for checking if service is approved
+// Virtuals
 serviceSchema.virtual("isApproved").get(function () {
   return !!this.approvedAt && !this.rejectedAt;
 });
 
-// Virtual for checking if service is rejected
 serviceSchema.virtual("isRejected").get(function () {
   return !!this.rejectedAt;
 });
 
-// Virtual for checking if service is pending
 serviceSchema.virtual("isPending").get(function () {
   return !this.approvedAt && !this.rejectedAt;
 });
 
-// Export the model
 export const ServiceModel = model<Service, IServiceModel>(
   "Service",
   serviceSchema

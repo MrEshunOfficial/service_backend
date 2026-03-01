@@ -20,28 +20,26 @@ export class ProviderIdImagesHandlers {
     const files = await this.fileService.getFilesByEntity(
       "provider",
       providerId,
-      {
-        status: "active",
-      }
+      { status: "active" }
     );
     return files.filter((f) => f.label === "provider_id_image");
   }
 
+  /**
+   * Unlink ID image using $pull + runValidators: false
+   * to avoid triggering pre-save middleware and subdocument validation.
+   */
   private async unlinkIdImage(providerId: string, fileId: Types.ObjectId) {
-    const provider = await ProviderModel.findOne({
-      _id: new Types.ObjectId(providerId),
-      isDeleted: false,
-    });
-
-    if (!provider || !provider.IdDetails) return;
-
-    provider.IdDetails.fileImage = provider.IdDetails.fileImage.filter(
-      (id) => id.toString() !== fileId.toString()
+    await ProviderModel.findByIdAndUpdate(
+      providerId,
+      { $pull: { "IdDetails.fileImage": fileId } },
+      { runValidators: false }
     );
-
-    await provider.save();
   }
 
+  /**
+   * Link ID images using $push + runValidators: false
+   */
   private async linkIdImages(
     providerId: string,
     fileIds: Types.ObjectId[]
@@ -58,10 +56,11 @@ export class ProviderIdImagesHandlers {
         return { linked: false, exists: true };
       }
 
-      // Append new images to existing ones
-      const existingIds = provider.IdDetails.fileImage || [];
-      provider.IdDetails.fileImage = [...existingIds, ...fileIds];
-      await provider.save();
+      await ProviderModel.findByIdAndUpdate(
+        provider._id,
+        { $push: { "IdDetails.fileImage": { $each: fileIds } } },
+        { runValidators: false }
+      );
 
       return { linked: true, exists: true };
     } catch (error) {
@@ -448,28 +447,29 @@ export class ProviderGalleryImagesHandlers {
     const files = await this.fileService.getFilesByEntity(
       "provider",
       providerId,
-      {
-        status: "active",
-      }
+      { status: "active" }
     );
     return files.filter((f) => f.label === "provider_gallery");
   }
 
-  private async unlinkGalleryImage(providerId: string, fileId: Types.ObjectId) {
-    const provider = await ProviderModel.findOne({
-      _id: new Types.ObjectId(providerId),
-      isDeleted: false,
-    });
-
-    if (!provider) return;
-
-    provider.BusinessGalleryImages = (
-      provider.BusinessGalleryImages || []
-    ).filter((id) => id.toString() !== fileId.toString());
-
-    await provider.save();
+  /**
+   * Unlink gallery image using $pull + runValidators: false
+   * to avoid triggering pre-save middleware and subdocument validation.
+   */
+  private async unlinkGalleryImage(
+    providerId: string,
+    fileId: Types.ObjectId
+  ) {
+    await ProviderModel.findByIdAndUpdate(
+      providerId,
+      { $pull: { BusinessGalleryImages: fileId } },
+      { runValidators: false }
+    );
   }
 
+  /**
+   * Link gallery images using $push + runValidators: false
+   */
   private async linkGalleryImages(
     providerId: string,
     fileIds: Types.ObjectId[]
@@ -482,10 +482,11 @@ export class ProviderGalleryImagesHandlers {
     if (!provider) return { linked: false, exists: false };
 
     try {
-      // Append new images to existing ones
-      const existingIds = provider.BusinessGalleryImages || [];
-      provider.BusinessGalleryImages = [...existingIds, ...fileIds];
-      await provider.save();
+      await ProviderModel.findByIdAndUpdate(
+        provider._id,
+        { $push: { BusinessGalleryImages: { $each: fileIds } } },
+        { runValidators: false }
+      );
 
       return { linked: true, exists: true };
     } catch (error) {
@@ -885,9 +886,7 @@ export class ProviderGalleryImagesHandlers {
       const archivedFiles = await this.fileService.getFilesByEntity(
         "provider",
         providerId,
-        {
-          status: "archived",
-        }
+        { status: "archived" }
       );
 
       const archivedGalleryImages = archivedFiles.filter(

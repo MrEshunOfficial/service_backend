@@ -69,6 +69,10 @@ export class ProviderIdImagesUploadHandler {
     };
   }
 
+  /**
+   * Link ID images to provider using $push + runValidators: false
+   * to avoid triggering pre-save middleware and subdocument validation.
+   */
   private async linkIdImages(
     providerId: string,
     fileIds: Types.ObjectId[]
@@ -82,10 +86,11 @@ export class ProviderIdImagesUploadHandler {
         return { linked: false, exists: true };
       }
 
-      // Append new images to existing ones
-      const existingIds = provider.IdDetails.fileImage || [];
-      provider.IdDetails.fileImage = [...existingIds, ...fileIds];
-      await provider.save();
+      await ProviderModel.findByIdAndUpdate(
+        provider._id,
+        { $push: { "IdDetails.fileImage": { $each: fileIds } } },
+        { runValidators: false }
+      );
 
       return { linked: true, exists: true };
     } catch (error) {
@@ -487,14 +492,12 @@ export class ProviderIdImagesUploadHandler {
         );
       }
 
-      // Unlink from provider
-      const provider = await this.findProvider(providerId);
-      if (provider && provider.IdDetails) {
-        provider.IdDetails.fileImage = provider.IdDetails.fileImage.filter(
-          (id) => id.toString() !== fileId
-        );
-        await provider.save();
-      }
+      // Unlink from provider using $pull + runValidators: false
+      await ProviderModel.findByIdAndUpdate(
+        providerId,
+        { $pull: { "IdDetails.fileImage": new Types.ObjectId(fileId) } },
+        { runValidators: false }
+      );
 
       // Delete from MongoDB
       await this.mongoService.deleteFile(fileId);
@@ -566,6 +569,10 @@ export class ProviderGalleryImagesUploadHandler {
     };
   }
 
+  /**
+   * Link gallery images to provider using $push + runValidators: false
+   * to avoid triggering pre-save middleware and subdocument validation.
+   */
   private async linkGalleryImages(
     providerId: string,
     fileIds: Types.ObjectId[]
@@ -574,10 +581,11 @@ export class ProviderGalleryImagesUploadHandler {
     if (!provider) return { linked: false, exists: false };
 
     try {
-      // Append new images to existing ones
-      const existingIds = provider.BusinessGalleryImages || [];
-      provider.BusinessGalleryImages = [...existingIds, ...fileIds];
-      await provider.save();
+      await ProviderModel.findByIdAndUpdate(
+        provider._id,
+        { $push: { BusinessGalleryImages: { $each: fileIds } } },
+        { runValidators: false }
+      );
 
       return { linked: true, exists: true };
     } catch (error) {
@@ -969,14 +977,12 @@ export class ProviderGalleryImagesUploadHandler {
         );
       }
 
-      // Unlink from provider
-      const provider = await this.findProvider(providerId);
-      if (provider) {
-        provider.BusinessGalleryImages = (
-          provider.BusinessGalleryImages || []
-        ).filter((id) => id.toString() !== fileId);
-        await provider.save();
-      }
+      // Unlink from provider using $pull + runValidators: false
+      await ProviderModel.findByIdAndUpdate(
+        providerId,
+        { $pull: { BusinessGalleryImages: new Types.ObjectId(fileId) } },
+        { runValidators: false }
+      );
 
       // Delete from MongoDB
       await this.mongoService.deleteFile(fileId);

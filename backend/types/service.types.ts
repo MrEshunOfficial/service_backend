@@ -3,7 +3,7 @@ import { Types, Model, HydratedDocument } from "mongoose";
 import { BaseEntity, SoftDeletable } from "./base.types";
 
 export interface Service extends BaseEntity, SoftDeletable {
-  // Core service details (common)
+  // Core service details
   title: string;
   description: string;
   slug: string;
@@ -11,17 +11,21 @@ export interface Service extends BaseEntity, SoftDeletable {
   categoryId: Types.ObjectId;
   coverImage?: Types.ObjectId;
 
-  // Provider-specific fields (optional for system services)
- providerId: Types.ObjectId[];
+  /**
+   * A service belongs to at most ONE provider.
+   * Optional because admins can create catalog/system services
+   * that aren't yet assigned to any provider.
+   */
+  providerId?: Types.ObjectId;
 
   // Pricing and availability
   servicePricing?: {
     serviceBasePrice: number;
-    includeTravelFee: boolean; // e.g., for services that require travel
-    includeAdditionalFees: boolean; // e.g., materials, equipment, etc.
-    currency: string; // 'GHS' or 'USD'
-    platformCommissionRate: number; // e.g., 0.20 for 20%
-    providerEarnings: number; // auto-calculated
+    includeTravelFee: boolean;
+    includeAdditionalFees: boolean;
+    currency: string;
+    platformCommissionRate: number;
+    providerEarnings: number; // auto-calculated in pre-save hook
   };
 
   isPrivate: boolean;

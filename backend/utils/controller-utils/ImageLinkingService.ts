@@ -134,7 +134,10 @@ export class ImageLinkingService {
           : undefined;
       }
 
-      await Model.findByIdAndUpdate(entity._id, updateData, { new: true });
+      await Model.findByIdAndUpdate(entity._id, updateData, {
+        new: true,
+        runValidators: false,
+      });
 
       return { linked: true, entityId: entity._id, fileId };
     } catch (error) {
@@ -192,6 +195,7 @@ export class ImageLinkingService {
 
       await Model.findByIdAndUpdate(new Types.ObjectId(entityId), updateData, {
         new: true,
+        runValidators: false,
       });
 
       return {
@@ -242,6 +246,7 @@ export class ImageLinkingService {
 
       await ProviderModel.findByIdAndUpdate(entity._id, updateData, {
         new: true,
+        runValidators: false,
       });
 
       return { linked: true, entityId: entity._id };
@@ -290,6 +295,7 @@ export class ImageLinkingService {
 
       const result = await Model.findOneAndUpdate(query, updateData, {
         new: true,
+        runValidators: false,
       });
 
       return { unlinked: !!result };
@@ -426,30 +432,22 @@ export class ImageLinkingService {
               image._id.toString() !== entity[imageFieldName].toString()
             ) {
               // Remove invalid reference
-              const updateData: Record<string, any> = {
-                $unset: { [imageFieldName]: 1 },
-              };
-
-              if (entityType === "user") {
-                updateData.lastModified = new Date();
-              }
-
-              await Model.findByIdAndUpdate(entity._id, updateData);
+              await Model.findByIdAndUpdate(
+                entity._id,
+                { $unset: { [imageFieldName]: 1 } },
+                { runValidators: false }
+              );
               repaired++;
             }
           }
 
           // Case 2: Entity exists, image exists, but not linked
           if (!entity[imageFieldName] && image) {
-            const updateData: Record<string, any> = {
-              [imageFieldName]: image._id,
-            };
-
-            if (entityType === "user") {
-              updateData.lastModified = new Date();
-            }
-
-            await Model.findByIdAndUpdate(entity._id, updateData);
+            await Model.findByIdAndUpdate(
+              entity._id,
+              { [imageFieldName]: image._id },
+              { runValidators: false }
+            );
             repaired++;
           }
         } catch (error) {

@@ -1,8 +1,9 @@
 // services/service.service.ts
-import { Types, UpdateQuery, PopulateOptions, Query } from "mongoose";
+import { Types, UpdateQuery, PopulateOptions } from "mongoose";
 
 import { Service } from "../types/service.types";
 import { ServiceModel } from "../models/service.model";
+import { ProviderModel } from "../models/profiles/provider.model";
 import slugify from "slugify";
 import { MongoDBFileService } from "./files/mongodb.files.service";
 import { ImageLinkingService } from "../utils/controller-utils/ImageLinkingService";
@@ -11,13 +12,20 @@ import { ImageLinkingService } from "../utils/controller-utils/ImageLinkingServi
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
-// DTOs for type safety
+// ─── DTOs ────────────────────────────────────────────────────────────────────
+
 export interface CreateServiceDTO {
   title: string;
   description: string;
   tags?: string[];
   categoryId: string;
   coverImage?: string;
+  /**
+   * The provider creating this service.
+   * When supplied the service is automatically pushed into
+   * that provider's `serviceOfferings` array.
+   * Omit for admin-created catalog/system services.
+   */
   providerId?: string;
   servicePricing?: {
     serviceBasePrice: number;
@@ -78,14 +86,15 @@ export enum ProviderAccessLevel {
   ADMIN = "admin",
 }
 
-// Population presets for different use cases
 export enum PopulationLevel {
-  NONE = "none", // No population at all
-  MINIMAL = "minimal", // Only IDs and names for lists
-  STANDARD = "standard", // Basic info for general queries
-  DETAILED = "detailed", // Full details for single service views
-  COMPLETE = "complete", // Everything including file URLs
+  NONE = "none",
+  MINIMAL = "minimal",
+  STANDARD = "standard",
+  DETAILED = "detailed",
+  COMPLETE = "complete",
 }
+
+// ─── Service ─────────────────────────────────────────────────────────────────
 
 class ServiceService {
   private fileService: MongoDBFileService;
@@ -96,9 +105,8 @@ class ServiceService {
     this.imageLinkingService = new ImageLinkingService();
   }
 
-  /**
-   * Get population options based on level
-   */
+  // ── Population helpers ──────────────────────────────────────────────────
+
   private getPopulationOptions(level: PopulationLevel): PopulateOptions[] {
     switch (level) {
       case PopulationLevel.NONE:
@@ -113,6 +121,7 @@ class ServiceService {
       case PopulationLevel.STANDARD:
         return [
           { path: "categoryId", select: "catName slug" },
+          { path: "providerId", select: "businessName slug" },
           { path: "coverImage", select: "url thumbnailUrl fileName" },
         ];
 
@@ -136,94 +145,135 @@ class ServiceService {
           {
             path: "providerId",
             select:
-              "businessName slug business_logo location business_contact createdAt",
+              "businessName slug business_logo location providerContactInfo createdAt",
           },
           {
             path: "coverImage",
-            select: "url thumbnailUrl fileName label uploadedAt fileSize mimeType",
+            select:
+              "url thumbnailUrl fileName label uploadedAt fileSize mimeType",
           },
           { path: "submittedBy", select: "name email role" },
           { path: "approvedBy", select: "name email" },
         ];
-        
 
       default:
         return [];
     }
   }
 
-  /**
-   * Create a new service
-   * Automatically links any orphaned cover image uploaded before service creation
-   */
-async createService(data: CreateServiceDTO): Promise<Service> {
-  try {
-    // Generate unique slug
-    const baseSlug = slugify(data.title, { lower: true, strict: true });
-    const slug = await this.generateUniqueSlug(baseSlug);
-
-    // Only admin can create private services (validation should happen in controller)
-    const serviceData: Partial<Service> = {
-      title: data.title,
-      description: data.description,
-      slug,
-      tags: data.tags || [],
-      categoryId: new Types.ObjectId(data.categoryId),
-      coverImage: data.coverImage
-        ? new Types.ObjectId(data.coverImage)
-        : undefined,
-      providerId: data.providerId
-        ? [new Types.ObjectId(data.providerId)]  // Wrap in array
-        : [],  // Empty array instead of undefined
-      servicePricing: data.servicePricing
-        ? {
-            serviceBasePrice: data.servicePricing.serviceBasePrice,
-            includeTravelFee: data.servicePricing.includeTravelFee ?? false,
-            includeAdditionalFees:
-              data.servicePricing.includeAdditionalFees ?? false,
-            currency: data.servicePricing.currency || "GHS",
-            platformCommissionRate:
-              data.servicePricing.platformCommissionRate ?? 0.2,
-            providerEarnings: 0, // Will be calculated in pre-save hook
-          }
-        : undefined,
-      isPrivate: data.isPrivate ?? false,
-      submittedBy: data.submittedBy
-        ? new Types.ObjectId(data.submittedBy)
-        : undefined,
-      isActive: false, // Requires approval
-    };
-
-    const service = new ServiceModel(serviceData);
-    await service.save();
-
-    // Link orphaned cover image if exists
-    const linkResult = await this.imageLinkingService.linkOrphanedImage(
-      "service",
-      service._id.toString(),
-      "service_cover",
-      "coverImage",
-      data.submittedBy
-    );
-
-    if (linkResult.linked) {
-      const updatedService = await ServiceModel.findById(service._id).lean();
-      return updatedService!;
-    }
-
-    return service.toObject();
-  } catch (error) {
-    throw new Error(
-      `Failed to create service: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`
-    );
+  private applyPopulation<T>(
+    query: any,
+    level: PopulationLevel
+  ): typeof query {
+    this.getPopulationOptions(level).forEach((opt) => {
+      query = query.populate(opt);
+    });
+    return query;
   }
-}
+
+  // ── Create ──────────────────────────────────────────────────────────────
 
   /**
-   * Check if a service with the same title exists in the same category
-   * Optionally checks for the same provider as well
+   * Create a new service.
+   *
+   * When `providerId` is provided the service is automatically linked to that
+   * provider's `serviceOfferings` array, keeping both sides of the relationship
+   * in sync without any extra work from the caller.
+   *
+   * Also links any orphaned cover image that was uploaded before the service
+   * document existed (pre-upload flow).
+   */
+  async createService(data: CreateServiceDTO): Promise<Service> {
+    try {
+      const baseSlug = slugify(data.title, { lower: true, strict: true });
+      const slug = await this.generateUniqueSlug(baseSlug);
+
+      // Validate that the provider profile exists before proceeding
+      if (data.providerId) {
+        const providerExists = await ProviderModel.exists({
+          _id: new Types.ObjectId(data.providerId),
+          isDeleted: false,
+        });
+
+        if (!providerExists) {
+          throw new Error(
+            `Provider profile not found for id: ${data.providerId}`
+          );
+        }
+      }
+
+      const serviceData: Partial<Service> = {
+        title: data.title,
+        description: data.description,
+        slug,
+        tags: data.tags ?? [],
+        categoryId: new Types.ObjectId(data.categoryId),
+        coverImage: data.coverImage
+          ? new Types.ObjectId(data.coverImage)
+          : undefined,
+        // Single scalar reference — null for catalog/system services
+        providerId: data.providerId
+          ? new Types.ObjectId(data.providerId)
+          : undefined,
+        servicePricing: data.servicePricing
+          ? {
+              serviceBasePrice: data.servicePricing.serviceBasePrice,
+              includeTravelFee: data.servicePricing.includeTravelFee ?? false,
+              includeAdditionalFees:
+                data.servicePricing.includeAdditionalFees ?? false,
+              currency: data.servicePricing.currency ?? "GHS",
+              platformCommissionRate:
+                data.servicePricing.platformCommissionRate ?? 0.2,
+              providerEarnings: 0, // calculated in pre-save hook
+            }
+          : undefined,
+        isPrivate: data.isPrivate ?? false,
+        submittedBy: data.submittedBy
+          ? new Types.ObjectId(data.submittedBy)
+          : undefined,
+        isActive: false, // requires admin approval
+      };
+
+      const service = new ServiceModel(serviceData);
+      await service.save();
+
+      // ── Auto-link: push service into provider's serviceOfferings ──────────
+      // $addToSet prevents duplicates if something retries.
+      if (data.providerId) {
+        await ProviderModel.findByIdAndUpdate(
+          new Types.ObjectId(data.providerId),
+          { $addToSet: { serviceOfferings: service._id } }
+        );
+      }
+
+      // Link orphaned cover image uploaded before service creation
+      const linkResult = await this.imageLinkingService.linkOrphanedImage(
+        "service",
+        service._id.toString(),
+        "service_cover",
+        "coverImage",
+        data.submittedBy
+      );
+
+      if (linkResult.linked) {
+        return (await ServiceModel.findById(service._id).lean()) as Service;
+      }
+
+      return service.toObject();
+    } catch (error) {
+      throw new Error(
+        `Failed to create service: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  // ── Read ────────────────────────────────────────────────────────────────
+
+  /**
+   * Check if a service with the same title already exists in a category.
+   * Optionally scoped to a specific provider.
    */
   async checkDuplicateService(
     title: string,
@@ -231,26 +281,18 @@ async createService(data: CreateServiceDTO): Promise<Service> {
     providerId?: string
   ): Promise<Service | null> {
     const query: Record<string, any> = {
-      title: { $regex: new RegExp(`^${title.trim()}$`, "i") }, // Case-insensitive exact match
+      title: { $regex: new RegExp(`^${title.trim()}$`, "i") },
       categoryId: new Types.ObjectId(categoryId),
       deletedAt: null,
     };
 
-    // Optional: Check if same provider is creating duplicate
     if (providerId) {
       query.providerId = new Types.ObjectId(providerId);
     }
 
-    const existingService = await ServiceModel.findOne(query)
-      .select("_id title slug")
-      .lean();
-
-    return existingService;
+    return ServiceModel.findOne(query).select("_id title slug").lean();
   }
 
-  /**
-   * Get service by ID with configurable population
-   */
   async getServiceById(
     serviceId: string,
     options: {
@@ -264,26 +306,16 @@ async createService(data: CreateServiceDTO): Promise<Service> {
     } = options;
 
     const query: Record<string, any> = { _id: serviceId };
+    if (!includeDeleted) query.deletedAt = null;
 
-    if (!includeDeleted) {
-      query.deletedAt = null;
-    }
+    const serviceQuery = this.applyPopulation(
+      ServiceModel.findOne(query),
+      populationLevel
+    );
 
-    let serviceQuery = ServiceModel.findOne(query);
-
-    // Apply population based on level
-    const populateOptions = this.getPopulationOptions(populationLevel);
-    populateOptions.forEach((popOption) => {
-      serviceQuery = serviceQuery.populate(popOption);
-    });
-
-    const service = await serviceQuery.lean();
-    return service;
+    return serviceQuery.lean();
   }
 
-  /**
-   * Get service by slug with configurable population
-   */
   async getServiceBySlug(
     slug: string,
     options: {
@@ -297,67 +329,43 @@ async createService(data: CreateServiceDTO): Promise<Service> {
     } = options;
 
     const query: Record<string, any> = { slug };
+    if (!includeDeleted) query.deletedAt = null;
 
-    if (!includeDeleted) {
-      query.deletedAt = null;
-    }
+    const serviceQuery = this.applyPopulation(
+      ServiceModel.findOne(query),
+      populationLevel
+    );
 
-    let serviceQuery = ServiceModel.findOne(query);
-
-    // Apply population based on level
-    const populateOptions = this.getPopulationOptions(populationLevel);
-    populateOptions.forEach((popOption) => {
-      serviceQuery = serviceQuery.populate(popOption);
-    });
-
-    const service = await serviceQuery.lean();
-    return service;
+    return serviceQuery.lean();
   }
 
   /**
-   * Get public services only (for business profile selection)
+   * Get all services belonging to a single provider (scalar field query).
    */
-  async getPublicServices(
-    filters?: Omit<ServiceSearchFilters, "isPrivate">,
-    pagination?: PaginationOptions,
-    populationLevel: PopulationLevel = PopulationLevel.STANDARD
+  async getServicesByProvider(
+    providerId: string,
+    options: {
+      includeInactive?: boolean;
+      pagination?: PaginationOptions;
+      populationLevel?: PopulationLevel;
+    } = {}
   ): Promise<ServiceQueryResult> {
-    const query: Record<string, any> = {
-      isActive: true,
-      deletedAt: null,
-      isPrivate: false, // Only public services
-    };
+    const {
+      includeInactive = false,
+      pagination,
+      populationLevel = PopulationLevel.MINIMAL,
+    } = options;
 
-    return this.queryServices(query, filters, pagination, populationLevel);
-  }
-
-  /**
-   * Get accessible services for a provider based on their access level
-   */
-  async getAccessibleServices(
-    accessLevel: ProviderAccessLevel,
-    filters?: ServiceSearchFilters,
-    pagination?: PaginationOptions,
-    populationLevel: PopulationLevel = PopulationLevel.MINIMAL
-  ): Promise<ServiceQueryResult> {
     const query: Record<string, any> = {
-      isActive: true,
+      providerId: new Types.ObjectId(providerId),
       deletedAt: null,
     };
 
-    // Standard providers can only see public services
-    if (accessLevel === ProviderAccessLevel.STANDARD) {
-      query.isPrivate = false;
-    }
-    // Verified, company-trained, and admin can see all services
-    // (No additional filter needed)
+    if (!includeInactive) query.isActive = true;
 
-    return this.queryServices(query, filters, pagination, populationLevel);
+    return this.queryServices(query, undefined, pagination, populationLevel);
   }
 
-  /**
-   * Get services by category
-   */
   async getServicesByCategory(
     categoryId: string,
     accessLevel: ProviderAccessLevel = ProviderAccessLevel.STANDARD,
@@ -370,46 +378,45 @@ async createService(data: CreateServiceDTO): Promise<Service> {
       deletedAt: null,
     };
 
-    // Apply access level restriction
-    if (accessLevel === ProviderAccessLevel.STANDARD) {
-      query.isPrivate = false;
-    }
+    if (accessLevel === ProviderAccessLevel.STANDARD) query.isPrivate = false;
 
     return this.queryServices(query, undefined, pagination, populationLevel);
   }
 
-/**
- * Get services by provider
- */
-async getServicesByProvider(
-  providerId: string,
-  options: {
-    includeInactive?: boolean;
-    pagination?: PaginationOptions;
-    populationLevel?: PopulationLevel;
-  } = {}
-): Promise<ServiceQueryResult> {
-  const {
-    includeInactive = false,
-    pagination,
-    populationLevel = PopulationLevel.MINIMAL,
-  } = options;
-
-  const query: Record<string, any> = {
-    providerId: new Types.ObjectId(providerId),  // This will now match array elements
-    deletedAt: null,
-  };
-
-  if (!includeInactive) {
-    query.isActive = true;
+  /**
+   * Get only public services (for business profile selection or public catalogue).
+   */
+  async getPublicServices(
+    filters?: Omit<ServiceSearchFilters, "isPrivate">,
+    pagination?: PaginationOptions,
+    populationLevel: PopulationLevel = PopulationLevel.STANDARD
+  ): Promise<ServiceQueryResult> {
+    return this.queryServices(
+      { isActive: true, deletedAt: null, isPrivate: false },
+      filters,
+      pagination,
+      populationLevel
+    );
   }
 
-  return this.queryServices(query, undefined, pagination, populationLevel);
-}
-
   /**
-   * Search services with full-text search
+   * Get services visible to a provider based on their access level.
+   * Standard providers see only public services.
+   * Verified / company-trained / admin see all.
    */
+  async getAccessibleServices(
+    accessLevel: ProviderAccessLevel,
+    filters?: ServiceSearchFilters,
+    pagination?: PaginationOptions,
+    populationLevel: PopulationLevel = PopulationLevel.MINIMAL
+  ): Promise<ServiceQueryResult> {
+    const query: Record<string, any> = { isActive: true, deletedAt: null };
+
+    if (accessLevel === ProviderAccessLevel.STANDARD) query.isPrivate = false;
+
+    return this.queryServices(query, filters, pagination, populationLevel);
+  }
+
   async searchServices(
     searchTerm: string,
     accessLevel: ProviderAccessLevel = ProviderAccessLevel.STANDARD,
@@ -423,17 +430,37 @@ async getServicesByProvider(
       deletedAt: null,
     };
 
-    // Apply access level restriction
-    if (accessLevel === ProviderAccessLevel.STANDARD) {
-      query.isPrivate = false;
-    }
+    if (accessLevel === ProviderAccessLevel.STANDARD) query.isPrivate = false;
 
     return this.queryServices(query, filters, pagination, populationLevel);
   }
 
-  /**
-   * Update service
-   */
+  async getPendingServices(
+    pagination?: PaginationOptions,
+    populationLevel: PopulationLevel = PopulationLevel.STANDARD
+  ): Promise<ServiceQueryResult> {
+    return this.queryServices(
+      {
+        deletedAt: null,
+        approvedAt: { $exists: false },
+        rejectedAt: { $exists: false },
+      },
+      undefined,
+      pagination,
+      populationLevel
+    );
+  }
+
+  async getAllServices(
+    filters?: ServiceSearchFilters,
+    pagination?: PaginationOptions,
+    populationLevel: PopulationLevel = PopulationLevel.MINIMAL
+  ): Promise<ServiceQueryResult> {
+    return this.queryServices({ deletedAt: null }, filters, pagination, populationLevel);
+  }
+
+  // ── Update ──────────────────────────────────────────────────────────────
+
   async updateService(
     serviceId: string,
     data: UpdateServiceDTO
@@ -444,22 +471,18 @@ async getServicesByProvider(
         deletedAt: null,
       });
 
-      if (!service) {
-        return null;
-      }
+      if (!service) return null;
 
-      // Update slug if title changes
+      // Regenerate slug only when title actually changes
       if (data.title && data.title !== service.title) {
         const baseSlug = slugify(data.title, { lower: true, strict: true });
-        const slug = await this.generateUniqueSlug(baseSlug, serviceId);
-        service.slug = slug;
+        service.slug = await this.generateUniqueSlug(baseSlug, serviceId);
       }
 
-      // Update fields
-      if (data.title) service.title = data.title;
-      if (data.description) service.description = data.description;
-      if (data.tags) service.tags = data.tags;
-      if (data.categoryId)
+      if (data.title !== undefined) service.title = data.title;
+      if (data.description !== undefined) service.description = data.description;
+      if (data.tags !== undefined) service.tags = data.tags;
+      if (data.categoryId !== undefined)
         service.categoryId = new Types.ObjectId(data.categoryId);
       if (data.coverImage !== undefined) {
         service.coverImage = data.coverImage
@@ -468,9 +491,7 @@ async getServicesByProvider(
       }
       if (data.isPrivate !== undefined) service.isPrivate = data.isPrivate;
 
-      // Update pricing if provided
       if (data.servicePricing) {
-        // Initialize servicePricing if it doesn't exist
         if (!service.servicePricing) {
           service.servicePricing = {
             serviceBasePrice: 0,
@@ -481,26 +502,17 @@ async getServicesByProvider(
             providerEarnings: 0,
           };
         }
-
-        if (data.servicePricing.serviceBasePrice !== undefined) {
-          service.servicePricing.serviceBasePrice =
-            data.servicePricing.serviceBasePrice;
-        }
-        if (data.servicePricing.includeTravelFee !== undefined) {
-          service.servicePricing.includeTravelFee =
-            data.servicePricing.includeTravelFee;
-        }
-        if (data.servicePricing.includeAdditionalFees !== undefined) {
-          service.servicePricing.includeAdditionalFees =
-            data.servicePricing.includeAdditionalFees;
-        }
-        if (data.servicePricing.currency) {
-          service.servicePricing.currency = data.servicePricing.currency;
-        }
-        if (data.servicePricing.platformCommissionRate !== undefined) {
-          service.servicePricing.platformCommissionRate =
-            data.servicePricing.platformCommissionRate;
-        }
+        const p = data.servicePricing;
+        if (p.serviceBasePrice !== undefined)
+          service.servicePricing.serviceBasePrice = p.serviceBasePrice;
+        if (p.includeTravelFee !== undefined)
+          service.servicePricing.includeTravelFee = p.includeTravelFee;
+        if (p.includeAdditionalFees !== undefined)
+          service.servicePricing.includeAdditionalFees = p.includeAdditionalFees;
+        if (p.currency !== undefined)
+          service.servicePricing.currency = p.currency;
+        if (p.platformCommissionRate !== undefined)
+          service.servicePricing.platformCommissionRate = p.platformCommissionRate;
       }
 
       await service.save();
@@ -515,8 +527,63 @@ async getServicesByProvider(
   }
 
   /**
-   * Update service cover image
-   * Uses ImageLinkingService for proper image linking
+   * Move a service from one provider to another.
+   * Cleans up the old provider's `serviceOfferings` array and
+   * adds the service to the new provider's array.
+   */
+  async reassignProvider(
+    serviceId: string,
+    newProviderId: string
+  ): Promise<Service | null> {
+    try {
+      const service = await ServiceModel.findOne({
+        _id: serviceId,
+        deletedAt: null,
+      });
+
+      if (!service) return null;
+
+      const newProviderOid = new Types.ObjectId(newProviderId);
+
+      // Validate new provider exists
+      const newProviderExists = await ProviderModel.exists({
+        _id: newProviderOid,
+        isDeleted: false,
+      });
+
+      if (!newProviderExists) {
+        throw new Error(`Provider not found: ${newProviderId}`);
+      }
+
+      // Remove from old provider's offerings
+      if (service.providerId) {
+        await ProviderModel.findByIdAndUpdate(service.providerId, {
+          $pull: { serviceOfferings: service._id },
+        });
+      }
+
+      // Assign to new provider
+      service.providerId = newProviderOid;
+      await service.save();
+
+      // Add to new provider's offerings
+      await ProviderModel.findByIdAndUpdate(newProviderOid, {
+        $addToSet: { serviceOfferings: service._id },
+      });
+
+      return service.toObject();
+    } catch (error) {
+      throw new Error(
+        `Failed to reassign service: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Update service cover image.
+   * Pass `null` to unlink the existing image.
    */
   async updateCoverImage(
     serviceId: string,
@@ -529,46 +596,34 @@ async getServicesByProvider(
       }
 
       if (coverImageId === null) {
-        // Unlinking image
-        const service = await ServiceModel.findOneAndUpdate(
-          {
-            _id: new Types.ObjectId(serviceId),
-            deletedAt: null,
-          },
-          {
-            $unset: { coverImage: 1 },
-          },
+        return ServiceModel.findOneAndUpdate(
+          { _id: new Types.ObjectId(serviceId), deletedAt: null },
+          { $unset: { coverImage: 1 } },
           { new: true }
         ).lean();
-
-        return service;
-      } else {
-        // Linking image using ImageLinkingService
-        const linkResult = await this.imageLinkingService.linkImageToEntity(
-          "service",
-          serviceId,
-          "service_cover",
-          "coverImage",
-          coverImageId,
-          lastModifiedBy
-        );
-
-        if (linkResult.linked) {
-          return (await ServiceModel.findById(
-            serviceId
-          ).lean()) as Service | null;
-        }
-
-        throw new Error("Failed to link cover image");
       }
+
+      const linkResult = await this.imageLinkingService.linkImageToEntity(
+        "service",
+        serviceId,
+        "service_cover",
+        "coverImage",
+        coverImageId,
+        lastModifiedBy
+      );
+
+      if (linkResult.linked) {
+        return ServiceModel.findById(serviceId).lean() as Promise<Service | null>;
+      }
+
+      throw new Error("Failed to link cover image");
     } catch (error) {
       throw error;
     }
   }
 
-  /**
-   * Approve service
-   */
+  // ── Moderation ──────────────────────────────────────────────────────────
+
   async approveService(
     serviceId: string,
     approverId: string
@@ -579,10 +634,7 @@ async getServicesByProvider(
         deletedAt: null,
       });
 
-      if (!service) {
-        return null;
-      }
-
+      if (!service) return null;
       await service.approve(approverId);
       return service.toObject();
     } catch (error) {
@@ -594,9 +646,6 @@ async getServicesByProvider(
     }
   }
 
-  /**
-   * Reject service
-   */
   async rejectService(
     serviceId: string,
     approverId: string,
@@ -608,10 +657,7 @@ async getServicesByProvider(
         deletedAt: null,
       });
 
-      if (!service) {
-        return null;
-      }
-
+      if (!service) return null;
       await service.reject(approverId, reason);
       return service.toObject();
     } catch (error) {
@@ -623,8 +669,10 @@ async getServicesByProvider(
     }
   }
 
+  // ── Delete / Restore ────────────────────────────────────────────────────
+
   /**
-   * Soft delete service
+   * Soft-delete a service and remove it from the provider's `serviceOfferings`.
    */
   async deleteService(serviceId: string): Promise<boolean> {
     try {
@@ -633,8 +681,13 @@ async getServicesByProvider(
         deletedAt: null,
       });
 
-      if (!service) {
-        return false;
+      if (!service) return false;
+
+      // Unlink from provider first
+      if (service.providerId) {
+        await ProviderModel.findByIdAndUpdate(service.providerId, {
+          $pull: { serviceOfferings: service._id },
+        });
       }
 
       await service.softDelete();
@@ -649,17 +702,23 @@ async getServicesByProvider(
   }
 
   /**
-   * Restore soft-deleted service
+   * Restore a soft-deleted service and re-add it to the provider's `serviceOfferings`.
    */
   async restoreService(serviceId: string): Promise<Service | null> {
     try {
       const service = await ServiceModel.findById(serviceId);
 
-      if (!service || !service.deletedAt) {
-        return null;
-      }
+      if (!service || !service.deletedAt) return null;
 
       await service.restore();
+
+      // Re-link to provider
+      if (service.providerId) {
+        await ProviderModel.findByIdAndUpdate(service.providerId, {
+          $addToSet: { serviceOfferings: service._id },
+        });
+      }
+
       return service.toObject();
     } catch (error) {
       throw new Error(
@@ -670,40 +729,8 @@ async getServicesByProvider(
     }
   }
 
-  /**
-   * Get pending services (for admin moderation)
-   */
-  async getPendingServices(
-    pagination?: PaginationOptions,
-    populationLevel: PopulationLevel = PopulationLevel.STANDARD
-  ): Promise<ServiceQueryResult> {
-    const query: Record<string, any> = {
-      deletedAt: null,
-      approvedAt: { $exists: false },
-      rejectedAt: { $exists: false },
-    };
+  // ── Permissions ─────────────────────────────────────────────────────────
 
-    return this.queryServices(query, undefined, pagination, populationLevel);
-  }
-
-  /**
-   * Get all active services (admin)
-   */
-  async getAllServices(
-    filters?: ServiceSearchFilters,
-    pagination?: PaginationOptions,
-    populationLevel: PopulationLevel = PopulationLevel.MINIMAL
-  ): Promise<ServiceQueryResult> {
-    const query: Record<string, any> = {
-      deletedAt: null,
-    };
-
-    return this.queryServices(query, filters, pagination, populationLevel);
-  }
-
-  /**
-   * Check if service is accessible by provider
-   */
   async isServiceAccessible(
     serviceId: string,
     accessLevel: ProviderAccessLevel
@@ -716,16 +743,9 @@ async getServicesByProvider(
       .select("isPrivate")
       .lean();
 
-    if (!service) {
-      return false;
-    }
+    if (!service) return false;
+    if (!service.isPrivate) return true;
 
-    // Public services are accessible to everyone
-    if (!service.isPrivate) {
-      return true;
-    }
-
-    // Private services are only for verified, company-trained, or admin
     return (
       accessLevel === ProviderAccessLevel.VERIFIED ||
       accessLevel === ProviderAccessLevel.COMPANY_TRAINED ||
@@ -733,9 +753,8 @@ async getServicesByProvider(
     );
   }
 
-  /**
-   * Bulk update services
-   */
+  // ── Bulk / Stats ─────────────────────────────────────────────────────────
+
   async bulkUpdateServices(
     serviceIds: string[],
     update: UpdateQuery<Service>
@@ -748,7 +767,6 @@ async getServicesByProvider(
         },
         update
       );
-
       return result.modifiedCount;
     } catch (error) {
       throw new Error(
@@ -759,9 +777,6 @@ async getServicesByProvider(
     }
   }
 
-  /**
-   * Get service statistics
-   */
   async getServiceStats(): Promise<{
     total: number;
     active: number;
@@ -770,15 +785,8 @@ async getServicesByProvider(
     private: number;
     public: number;
   }> {
-    try {
-      const [
-        total,
-        active,
-        pending,
-        rejected,
-        privateServices,
-        publicServices,
-      ] = await Promise.all([
+    const [total, active, pending, rejected, privateCount, publicCount] =
+      await Promise.all([
         ServiceModel.countDocuments({ deletedAt: null }),
         ServiceModel.countDocuments({ isActive: true, deletedAt: null }),
         ServiceModel.countDocuments({
@@ -802,91 +810,44 @@ async getServicesByProvider(
         }),
       ]);
 
-      return {
-        total,
-        active,
-        pending,
-        rejected,
-        private: privateServices,
-        public: publicServices,
-      };
-    } catch (error) {
-      throw new Error(
-        `Failed to get service stats: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
-    }
+    return {
+      total,
+      active,
+      pending,
+      rejected,
+      private: privateCount,
+      public: publicCount,
+    };
   }
 
-  /**
-   * Get image status for a service
-   * Useful for debugging image linking issues
-   */
-  async getServiceImageStatus(serviceId: string) {
-    try {
-      return await this.imageLinkingService.getImageStatus(
-        "service",
-        serviceId,
-        "service_cover",
-        "coverImage"
-      );
-    } catch (error) {
-      throw error;
-    }
-  }
+  // ── Image helpers ─────────────────────────────────────────────────────────
 
   /**
-   * Repair broken service cover image links
-   */
-  async repairServiceCoverLinks(specificServiceId?: string) {
-    try {
-      return await this.imageLinkingService.repairBrokenLinks(
-        "service",
-        "service_cover",
-        "coverImage",
-        specificServiceId
-      );
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Get service with complete details including cover image URL
-   * This method always uses COMPLETE population level
+   * Get complete service with hydrated cover image URL.
    */
   async getCompleteService(serviceId: string): Promise<{
     service: Service | null;
-    coverImage?: {
-      url: string;
-      thumbnailUrl?: string;
-      uploadedAt: Date;
-    };
+    coverImage?: { url: string; thumbnailUrl?: string; uploadedAt: Date };
   }> {
     try {
       if (!Types.ObjectId.isValid(serviceId)) {
         throw new Error("Invalid service ID");
       }
 
-      // Use COMPLETE population level for this method
       const service = await this.getServiceById(serviceId, {
         populationLevel: PopulationLevel.DETAILED,
       });
 
-      if (!service) {
-        return { service: null };
-      }
+      if (!service) return { service: null };
 
       const result: any = { service };
 
-      // Get cover image details if exists
       if (service.coverImage) {
         const file = await this.fileService.getFileById(
           service.coverImage.toString()
         );
 
-        if (file && file.status === "active") {
+        if (file?.status === "active") {
           result.coverImage = {
             url: file.url,
             thumbnailUrl: file.thumbnailUrl,
@@ -901,9 +862,26 @@ async getServicesByProvider(
     }
   }
 
-  /**
-   * Helper: Generate unique slug
-   */
+  async getServiceImageStatus(serviceId: string) {
+    return this.imageLinkingService.getImageStatus(
+      "service",
+      serviceId,
+      "service_cover",
+      "coverImage"
+    );
+  }
+
+  async repairServiceCoverLinks(specificServiceId?: string) {
+    return this.imageLinkingService.repairBrokenLinks(
+      "service",
+      "service_cover",
+      "coverImage",
+      specificServiceId
+    );
+  }
+
+  // ── Private helpers ───────────────────────────────────────────────────────
+
   private async generateUniqueSlug(
     baseSlug: string,
     excludeId?: string
@@ -913,23 +891,13 @@ async getServicesByProvider(
 
     while (true) {
       const query: Record<string, any> = { slug };
-      if (excludeId) {
-        query._id = { $ne: excludeId };
-      }
-
+      if (excludeId) query._id = { $ne: excludeId };
       const existing = await ServiceModel.findOne(query).select("_id").lean();
-      if (!existing) {
-        return slug;
-      }
-
-      slug = `${baseSlug}-${counter}`;
-      counter++;
+      if (!existing) return slug;
+      slug = `${baseSlug}-${counter++}`;
     }
   }
 
-  /**
-   * Helper: Common query method with pagination, filtering, and dynamic population
-   */
   private async queryServices(
     baseQuery: Record<string, any>,
     filters?: ServiceSearchFilters,
@@ -938,62 +906,38 @@ async getServicesByProvider(
   ): Promise<ServiceQueryResult> {
     const query = { ...baseQuery };
 
-    // Apply filters
-    if (filters?.categoryId) {
+    if (filters?.categoryId)
       query.categoryId = new Types.ObjectId(filters.categoryId);
-    }
-
-    if (filters?.providerId) {
+    if (filters?.providerId)
       query.providerId = new Types.ObjectId(filters.providerId);
-    }
-
-    if (filters?.isActive !== undefined) {
-      query.isActive = filters.isActive;
-    }
-
-    if (filters?.isPrivate !== undefined) {
-      query.isPrivate = filters.isPrivate;
-    }
+    if (filters?.isActive !== undefined) query.isActive = filters.isActive;
+    if (filters?.isPrivate !== undefined) query.isPrivate = filters.isPrivate;
 
     if (filters?.minPrice !== undefined || filters?.maxPrice !== undefined) {
       const priceFilter: any = {};
-      if (filters.minPrice !== undefined) {
-        priceFilter.$gte = filters.minPrice;
-      }
-      if (filters.maxPrice !== undefined) {
-        priceFilter.$lte = filters.maxPrice;
-      }
+      if (filters.minPrice !== undefined) priceFilter.$gte = filters.minPrice;
+      if (filters.maxPrice !== undefined) priceFilter.$lte = filters.maxPrice;
       query["servicePricing.serviceBasePrice"] = priceFilter;
     }
 
-    if (filters?.tags && filters.tags.length > 0) {
-      query.tags = { $in: filters.tags };
-    }
+    if (filters?.tags?.length) query.tags = { $in: filters.tags };
 
-    // Pagination
-    const page = pagination?.page || 1;
+    const page = pagination?.page ?? 1;
     const limit = Math.min(
-      pagination?.limit || DEFAULT_PAGE_SIZE,
+      pagination?.limit ?? DEFAULT_PAGE_SIZE,
       MAX_PAGE_SIZE
     );
     const skip = (page - 1) * limit;
-
-    // Sorting
-    const sortField = pagination?.sortBy || "createdAt";
+    const sortField = pagination?.sortBy ?? "createdAt";
     const sortOrder = pagination?.sortOrder === "asc" ? 1 : -1;
-    const sort: any = { [sortField]: sortOrder };
 
-    // Build query with dynamic population
-    let serviceQuery = ServiceModel.find(query)
-      .sort(sort)
-      .skip(skip)
-      .limit(limit);
-
-    // Apply population based on level
-    const populateOptions = this.getPopulationOptions(populationLevel);
-    populateOptions.forEach((popOption) => {
-      serviceQuery = serviceQuery.populate(popOption);
-    });
+    const serviceQuery = this.applyPopulation(
+      ServiceModel.find(query)
+        .sort({ [sortField]: sortOrder })
+        .skip(skip)
+        .limit(limit),
+      populationLevel
+    );
 
     const [services, total] = await Promise.all([
       serviceQuery.lean(),
